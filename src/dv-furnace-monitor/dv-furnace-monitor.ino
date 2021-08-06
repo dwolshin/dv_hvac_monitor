@@ -1,37 +1,24 @@
+//main sketch
+//OTA update enabled
+//Posting live DHT sensor data to AWS IOT
 
-
-/***************************************************
-  Adafruit MQTT Library ESP8266 Example
-  Must use ESP8266 Arduino from:
-    https://github.com/esp8266/Arduino
-  Works great with Adafruit's Huzzah ESP board & Feather
-  ----> https://www.adafruit.com/product/2471
-  ----> https://www.adafruit.com/products/2821
-  Adafruit invests time and resources providing this open source code,
-  please support Adafruit and open-source hardware by purchasing
-  products from Adafruit!
-  Written by Tony DiCola for Adafruit Industries.
-  MIT license, all text above must be included in any redistribution
- ****************************************************/
+#define ARDUINOJSON_USE_LONG_LONG 1
 #include <ESP8266WiFi.h>
-#include "Adafruit_MQTT.h"
-#include "Adafruit_MQTT_Client.h"
+#include <CertStoreBearSSL.h>
+#include <time.h>
+#include <LittleFS.h>
+#include <PubSubClient.h>
 #include <DHT.h>
-#include <TimeLib.h> 
 #include <NTPClient.h>
 #include <WiFiUdp.h>
-#include <ArduinoJson.h>
-#include <ArduinoOTA.h>
-#include <ESP_EEPROM.h>
+#include "secrets.h"
+//Set only ONE user at a time
+#define DJW
+//#define VIC
+#include "secrets.h" //include MUST come after user definition
 
 
-/************************* Locaction/Owner setup*********************************/
-// Only enable ONE config or the other at a time
-#define DJW // Set for Dan's sensors
-//#define VIC // Set for Vic's sensors
-
-
-/************************* DHT Setup*********************************/
+/*********************** DHT Setup*********************************/
   
 // The DHT11 Elegoo module has 3 pins: viewed from top, pins down, left to right - Data, Power, Ground
 // The data pin is connected to the Arduino D2
@@ -56,320 +43,292 @@
 DHT dht(DHTPIN, DHTTYPE);
 
 
+//these are for holding the AWS private key and cert, stored in flash
+#define MAX_PEM_SIZE 4096 // max size of PEM certs
+char clientKeyStr[MAX_PEM_SIZE];
+char clientCertStr[MAX_PEM_SIZE];
 
 /************************* WiFi Access Point *********************************/
-// WiFi credentials.
-#ifdef DJW
-const char* WLAN_SSID = "DickStorm";
-const char* WLAN_PASS = "!!!3comuse409";
-#elif VIC
-const char* WLAN_SSID = "odryna";
-const char* WLAN_PASS = "dead123456";
-#endif
+//Set credentials in secrets.h or you can override and set them here
+//const char* WLAN_SSID = "Your SSID";
+//const char* WLAN_PASS = "Your Password";
 
-/************************* WiFi Access Point *********************************/
 // Define NTP Client to get time
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP);
-
-// Glocal Variables that will be used to stamp all logging events
-String formattedDate;
-String dayStamp;
-String timeStamp;
-String deviceID;
-
-/************************* Adafruit.io Setup *********************************/
-
-#define AIO_SERVER      "io.adafruit.com"
-#define AIO_SERVERPORT  1883                   // use 8883 for SSL
-//#define AIO_USERNAME    "...your AIO username (see https://accounts.adafruit.com)..."
-//#define AIO_KEY         "...your AIO key..."
-#define AIO_USERNAME  "dwolshin"
-#define AIO_KEY       "aio_Pzun23CfIfROr4OWViFPvEZAKtkh"
-
-/************************* Define EEPROM structure *********************************/
-
-// The neatest way to access variables stored in EEPROM is using a structure
-// NOTE this struct should be pre-populated by the setup script, stored in a seperate PRIVATE repo to hold sensitive info like API keys
-struct MyEEPROMStruct {
-  String EEPROM_AIO_KEY;
-  String EEPROM_AIO_USERNAME;
-} eepromVar1;
+NTPClient timeClient(ntpUDP, "0.pool.ntp.org");
 
 
-/************ Global State (you don't need to change this!) ******************/
+// Find this awsEndpoint in the AWS Console: Manage - Things, choose your thing
+// choose Interact, its the HTTPS Rest endpoint
+const char* awsEndpoint = "an1v1kdoueaep-ats.iot.us-west-2.amazonaws.com";
 
-// Create an ESP8266 WiFiClient class to connect to the MQTT server.
-WiFiClient client;
-// or... use WiFiClientSecure for SSL
-//WiFiClientSecure client;
+// A single, global CertStore which can be used by all
+// connections.  Needs to stay live the entire time any of
+// the WiFiClientBearSSLs are present.
+BearSSL::CertStore certStore;
+BearSSL::WiFiClientSecure wifiClient;
+BearSSL::X509List *clientCert;
+BearSSL::PrivateKey *clientKey;
+//setup to listen for MQTT messages
+void msgReceived(char* topic, byte* payload, unsigned int len);
+//MQTT pubsub client 
+PubSubClient pubSubClient(awsEndpoint, 8883, msgReceived, wifiClient); 
 
-// Setup the MQTT client class by passing in the WiFi client and MQTT server and login details.
-//Adafruit_MQTT_Client mqtt(&client, AIO_SERVER, AIO_SERVERPORT, eepromVar1.AIO_USERNAME, eepromVar1.AIO_KEY);
-Adafruit_MQTT_Client mqtt(&client, AIO_SERVER, AIO_SERVERPORT, AIO_USERNAME, AIO_KEY);
 
-/****************************** Feeds ***************************************/
+/* Set up values for your repository and binary names */
+#define GHOTA_USER "dwolshin"
+#define GHOTA_REPO "dv_hvac_monitor"
+#define GHOTA_CURRENT_TAG "1.0.2"
+#define GHOTA_BIN_FILE "djw-ota-update-test.ino.nodemcu.bin"
+#define GHOTA_ACCEPT_PRERELEASE 0
+#include <ESP_OTA_GitHub.h>
 
-// Setup feeds for publishing.
-// Notice MQTT paths for AIO follow the form: <username>/feeds/<feedname>
-Adafruit_MQTT_Publish onoffbuttonpub = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/onoff");
-Adafruit_MQTT_Publish dhtpub = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/dht/json");
-
-// Setup a feed for subscribing to changes.
-Adafruit_MQTT_Subscribe onoffbuttonsub = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/feeds/onoff");
+// Initialise OTA Update Code
+ESPOTAGitHub ESPOTAGitHub(&certStore, GHOTA_USER, GHOTA_REPO, GHOTA_CURRENT_TAG, GHOTA_BIN_FILE, GHOTA_ACCEPT_PRERELEASE);
 
 
 
-
-/*************************** Sketch Code ************************************/
-
-// Bug workaround for Arduino 1.6.6, it seems to need a function declaration
-// for some reason (only affects ESP8266, likely an arduino-builder bug).
-void MQTT_connect();
-
+/* SKETCH SETUP SSSSSSSSSSSSSSSSSS
+ S  
+ S  
+ */
 void setup() {
   Serial.begin(115200);
-  delay(1000);
+  Serial.println();
+  Serial.println();
 
-  EEPROM.begin(sizeof(MyEEPROMStruct));
-
-
-  /* Enable Arduino Watchdog Timer:
-     valid timer optoins:
-     WDTO_250MS, WDTO_500MS
-     WDTO_1S, WDTO_2S,WDTO_4S, WDTO_8S
-  */
-  //  wdt_enable(WDTO_4S);
-
-  Serial.println(); Serial.println();
-  Serial.println("System intializing");
-  Serial.println("Vic and Dan's HVAC Monitor - R1");
-
+  //init the CA cert store from flash
+  LittleFS.begin();
+   int numCerts = certStore.initCertStore(LittleFS, PSTR("/certs.idx"), PSTR("/certs.ar"));
+  Serial.printf("Number of CA certs read: %d\n", numCerts);
+  if (numCerts == 0) {
+    Serial.printf("No certs found. Did you unzip the connected device package from AWS and and upload the keys/certs to LittleFS directory before running?\n");
+    return; // Can't connect to anything w/o certs!
+  }
+  
   // Connect to WiFi access point.
-  Serial.print("Connecting to "); Serial.println(WLAN_SSID);
+  Serial.println(); Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(WLAN_SSID);
 
   WiFi.begin(WLAN_SSID, WLAN_PASS);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
-    Serial.print(".");  // Print dots on the serial console until a connection is made
+    Serial.print(".");
   }
   Serial.println();
+
   Serial.println("WiFi connected");
-  deviceID = WiFi.macAddress(); // This will be appended to every logging post
-  Serial.print("MAC address: "); Serial.println(deviceID);
-  Serial.print("IP address: "); Serial.println(WiFi.localIP());
+  Serial.println("IP address: "); Serial.println(WiFi.localIP());
 
-  // Initialize a NTPClient to get time
-  timeClient.begin();
-  // Set offset time in seconds to adjust for your timezone, for example:
-  // GMT +1 = 3600
-  // GMT +8 = 28800
-  // GMT -1 = -3600
-  // GMT 0 = 0
-  timeClient.setTimeOffset(0);  //We're going to post everything to the cloud with a GMT based timestamp
-  Serial.println("Contacting NTP server for time update");
-  timeClient.forceUpdate();
+  setClock(); // Required for X.509 validation
 
-  // Setup MQTT subscription for onoff feed.
- // mqtt.subscribe(&onoffbuttonsub);
+ 
+/* This is the actual code to check and upgrade */
+    Serial.println("Checking for update...");
+    if (ESPOTAGitHub.checkUpgrade()) {
+    Serial.print("Upgrade found at: ");
+    Serial.println(ESPOTAGitHub.getUpgradeURL());
+    if (ESPOTAGitHub.doUpgrade()) {
+      Serial.println("Upgrade complete."); //This should never be seen as the device should restart on successful upgrade.
+    } else {
+      Serial.print("Unable to upgrade: ");
+      Serial.println(ESPOTAGitHub.getLastError());
+    }
+    } else {
+    Serial.print("Not proceeding to upgrade: ");
+    Serial.println(ESPOTAGitHub.getLastError());
+    }
+    /* End of check and upgrade code */
+
+ //load the certificates and private key for talking to AWS
+ File cert = LittleFS.open("/DJWESP8266.cert.pem", "r");
+  clientCert = new X509List(cert, cert.size());
+  cert.close();
+  
+   File key = LittleFS.open("/DJWESP8266.private.key", "r");
+  clientKey =new BearSSL::PrivateKey(key, key.size());
+  key.close();
 
   //init DHT sensor
   Serial.println("Starting DHT Sensor");
   dht.begin();
-  //  delay(2000);
-
-  // Access the NTP server, and get Time
-
-
-  //Added this mqtt_connect to setup, so we can pub the inital ON state
- MQTT_connect();
-
-  if (! onoffbuttonpub.publish(1)) {
-    Serial.println(F("Failed"));
-  } else {
-    Serial.println(F("OK!"));
-
-  }
-
-  Serial.println("----------------  End System Startup ---------------------");
-
+    
 }
 
-uint32_t x = 0;
+//global for main loop
+unsigned long lastLoopDelay;
+// Variable to save current epoch time
+unsigned long epochTime; 
 
+/* MAIN LOOP MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+ M  
+ M  
+ */
 void loop() {
-  // Make sure TIME is properly intialized, and kept up to date
-  if (timeClient.update()) {
-    Serial.println("Time Client Updated");
-    setTime(timeClient.getEpochTime());
+
+
+  //Don't block the main loop, but check elapsed time and only run the contense of this block ever 10s
+  if (millis() - lastLoopDelay > 10000) {
+        
+    // set the cert store and keys for this connection  
+     wifiClient.setClientRSACert(clientCert,clientKey);
+     wifiClient.setCertStore(&certStore);
+      
+      pubSubCheckConnect();
+    
+       //DynamicJsonBuffer jsonBuffer;
+      DynamicJsonDocument jsonDoc(512);
+    
+      //add the sensorname, host and time to the JSON doc
+      jsonDoc["sensorname"] = SENSORNAME;
+      jsonDoc["host"] = "DJWESP8266";
+      
+      epochTime = getTime();
+      
+      jsonDoc["time"] = epochTime;
+     JsonObject jsonObj = jsonDoc.as<JsonObject>(); //jsonObj is a reference for passing around jsonDoc to write sensor data
+
+
+
+      /****************
+       * 
+       * Add in new snsor readings here
+       */
+      //read a sensor, pass in the jsonObj 
+
+      readDHT(jsonObj); //read a DHT sensor
+
+
+
+     //Print out the jsonDoc to Serial before publishing     
+     //serializeJson(jsonDoc, Serial);
+    
+      //need to convert the doc to a char array for publish to MQTT feed
+      char publishData[128];
+      int b = serializeJson(jsonDoc, publishData);
+      Serial.print("JSON doc in bytes = ");
+      Serial.println(b, DEC);
+        
+      //this is the magic to publish to the feed
+      pubSubClient.publish("/sensors/dht", publishData);
+     Serial.print("Published: "); Serial.println(publishData);
+     
+     //update the last publish time
+     lastLoopDelay = millis();
   }
-  else {
-    Serial.println("Time Client Update Failed");
+  
 
-  }
-  Serial.println("------  New Data Post  --------------");
-  Serial.print("Epoch Time (GMT): ");
-  Serial.println(timeClient.getEpochTime());  // Note that now() does not work.  The NTP library keeps its own time
-  Serial.print("Formatted Time (GMT): ");
-  Serial.println(timeClient.getFormattedTime());
-  Serial.print(hour()); Serial.print(":"); Serial.print(minute()); Serial.print(":"); Serial.print(second());
-  Serial.print(" "); Serial.print(month()); Serial.print("/"); Serial.print(day()); Serial.print("/"); Serial.print(year());
-  Serial.println();
-
-
-  //DynamicJsonBuffer jsonBuffer;
-  DynamicJsonDocument jsonDoc(512);
-
-  //add the sensorname, host and time to the JSON doc
-  jsonDoc["sensorname"] = SENSORNAME;
-  jsonDoc["host"] = deviceID;
-  jsonDoc["time"] = timeClient.getEpochTime();
-
-  float ambientT=0, ambientH=0;
-
-  readSensors(ambientT, ambientH);    // Read all of the sensors, each appending to the JSON
-  jsonDoc["value"] = ambientT;
-
-
-  //Use a JSON lib insead of creating manually
-    // We're going to start making a JSON string of a ton of data that we're going to post to a data lake
-  //  String JSON = "{";
-  //  JSON += "\"host\":" + deviceID + "\",\"time\":\"" + now() + "\"";
-   // readSensors(JSON);    // Read all of the sensors, each appending to the JSON
-  //  JSON += "}";  // Close the string.
-   // Serial.println(JSON);
-
-    //Convert the string to a char array for publishing
-
-    // Length (with one extra character for the null terminator)
- //   int str_len = JSON.length() + 1;
-
-    // Prepare the character array (the buffer)
-  //  char char_array[str_len];
-//
-    // Copy it over
-    //JSON.toCharArray(char_array, str_len);
-
-
-  delay(5000); // Wait 5 seconds between sensor reads
-
-  //pet watchdog
-  ////  wdt_reset();
-
-  // Ensure the connection to the MQTT server is alive (this will make the first
-  // connection and automatically reconnect when disconnected).  See the MQTT_connect
-  // function definition further below.
-  ////  MQTT_connect();
-
-
-  // this is our 'wait for incoming subscription packets' busy subloop
-  // try to spend your time here
-
-/*
-  Adafruit_MQTT_Subscribe *subscription;
-  while ((subscription = mqtt.readSubscription(5000))) {
-    if (subscription == &onoffbuttonsub) {
-      Serial.print(F("Got: "));
-      Serial.println((char *)onoffbuttonsub.lastread);
-    }
-  }
-
-
-*/
-  // Now we can publish stuff!
-
-  //Print out the JSON doc to serial
-  serializeJson(jsonDoc, Serial);
-
-  //need to convert the doc to a char array for publish to MQTT feed
-  char publishData[128];
-  int b = serializeJson(jsonDoc, publishData);
-  Serial.print("JSON doc in bytes = ");
-  Serial.println(b, DEC);
-
-  //Check if onoff feed is ON:
-
-
-  if (strcmp((char *)onoffbuttonsub.lastread, "ON") == 0) { // check if feed value matchs text string "ON"
-
-    //Publish the JSON to the feed
-    if (! dhtpub.publish(publishData)) {
-      Serial.println(F("Publish Failed"));
-    } else {
-      Serial.println(F("Publish OK!"));
-    }
-    delay(5000);  // wait 5 seconds
-
-
-  } else if ( (atoi((char *)onoffbuttonsub.lastread)) == 1) { // convert feed value to a number with atoi and test
-
-    //Publish the JSON to the feed
-    if (! dhtpub.publish(publishData)) {
-      Serial.println(F("Publish Failed"));
-    } else {
-      Serial.println(F("Publish OK!"));
-    }
-
-
-    delay(5000);  // wait 5 seconds
-  } else {
-    Serial.println("Feed is off server side - value is:");
-    Serial.print((char *)onoffbuttonsub.lastread);
-  }
-
-
-  // ping the server to keep the mqtt connection alive
-  // NOT required if you are publishing once every KEEPALIVE seconds
-  /*
-    if(! mqtt.ping()) {
-    mqtt.disconnect();
-    }
-  */
-}
-
-// Function to connect and reconnect as necessary to the MQTT server.
-// Should be called in the loop function and it will take care if connecting.
-void MQTT_connect() {
-  int8_t ret;
-
-  // Stop if already connected.
-  if (mqtt.connected()) {
-    return;
-  }
-
-  Serial.print("Connecting to MQTT... ");
-
-  uint8_t retries = 3;
-  while ((ret = mqtt.connect()) != 0) { // connect will return 0 for connected
-    Serial.println(mqtt.connectErrorString(ret));
-    Serial.println("Retrying MQTT connection in 5 seconds...");
-    mqtt.disconnect();
-    delay(5000);  // wait 5 seconds
-    retries--;
-    if (retries == 0) {
-      // basically die and wait for WDT to reset me
-      while (1);
-    }
-  }
-  Serial.println("MQTT Connected!");
 }
 
 
+/* readSensors ************************
+ *  
+ *  
+ */
+// Subroutine that collects the values of all of the sensors.
+//Pass in the json Object by ref
+void readDHT(JsonObject &jsonObj) {
 
-// Subroutine that collects the values of all of the sensors. The return is formatted as a JSON string
-// The format will look like: {"severity":"info","deviceType":"android"}
-void readSensors( float& ambientT, float& ambientH) {
-
-  // Read Ambient Temp and Humidity and add them to the JSON
+  //local vars to hold sensor data
+  float ambientT, ambientH;
+      
+  // DHT Read Ambient Temp and Humidity and add them to the JSON
   ambientT = dht.readTemperature() * 9 / 5 + 32; // Convert to Farenheight
 
   ambientH = dht.readHumidity();
-  Serial.println("Temp: " );
-  Serial.print(ambientT);
 
+  
+//store data in the json doc in the key = value format below
+      jsonObj["temp"] = ambientT;
+      jsonObj["humidty"] = ambientH;
+     
+  Serial.print("Temp: " );
+  Serial.println(ambientT);
 
-  //JSON += ",\"ambientT\":\"" + String(ambientT, 1) + "\"";
-  //float ambientH = dht.readHumidity();
-  //JSON += ",\"ambientH\":\"" + String(ambientH, 0) + "%\"";
+  Serial.print("Humidity: " );
+  Serial.println(ambientH);
 
 }
+
+
+// Function that gets current epoch time
+unsigned long getTime() {
+  timeClient.update();
+  unsigned long now = timeClient.getEpochTime();
+  return now;
+}
+
+/* msgReceived ***********************
+ *  
+ *   
+ */
+void msgReceived(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message received on "); Serial.print(topic); Serial.print(": ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+}
+
+/* pubSubCheckConnect ***********************
+ *   
+ *  
+ */
+void pubSubCheckConnect() {
+  if ( ! pubSubClient.connected()) {
+    Serial.print("PubSubClient connecting to: "); Serial.print(awsEndpoint);
+    while ( ! pubSubClient.connected()) {
+      Serial.print(".");
+      pubSubClient.connect("DJWESP8266");
+    }
+    Serial.println(" connected");
+    pubSubClient.subscribe("/");
+  }
+  pubSubClient.loop();
+}
+
+/*setClock
+ * Set time via NTP, as required for x.509 validation
+ * 
+ */
+void setClock() {
+  configTime(3 * 3600, 0, "0.pool.ntp.org", "time.nist.gov");
+
+  Serial.print("Waiting for NTP time sync: ");
+  time_t now = time(nullptr);
+  while (now < 8 * 3600 * 2) {
+    delay(500);
+    Serial.print(".");
+    now = time(nullptr);
+  }
+  Serial.println("");
+  struct tm timeinfo;
+  gmtime_r(&now, &timeinfo);
+  Serial.print("Current time: ");
+  Serial.print(asctime(&timeinfo));
+}
+
+/****
+*Includes code from example:
+* Mar 2018 by Earle F. Philhower, III
+* Released to the public domain
+*
+*
+ * Includes code from example
+  WiFiClientBearSSL- SSL client/server for esp8266 using BearSSL libraries
+  - Mostly compatible with Arduino WiFi shield library and standard
+    WiFiClient/ServerSecure (except for certificate handling).
+  Copyright (c) 2018 Earle F. Philhower, III
+  This library is free software; you can redistribute it and/or
+  modify it under the terms of the GNU Lesser General Public
+  License as published by the Free Software Foundation; either
+  version 2.1 of the License, or (at your option) any later version.
+  This library is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+  Lesser General Public License for more details.
+  You should have received a copy of the GNU Lesser General Public
+  License along with this library; if not, write to the Free Software
+  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+*/
