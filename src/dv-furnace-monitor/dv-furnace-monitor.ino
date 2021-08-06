@@ -24,42 +24,40 @@
 #include <ArduinoOTA.h>
 #include <ESP_EEPROM.h>
 
-/*
+
+/************************* Locaction/Owner setup*********************************/
+// Only enable ONE config or the other at a time
+#define DJW // Set for Dan's sensors
+//#define VIC // Set for Vic's sensors
+
+
+/************************* DHT Setup*********************************/
+  
 // The DHT11 Elegoo module has 3 pins: viewed from top, pins down, left to right - Data, Power, Ground
 // The data pin is connected to the Arduino D2
 //NOTE for nodeMCU have to specify Dx for the pin, not just x
 //#define DHTPIN D2  // modify to the pin we connected
-
-
 // Uncomment whatever type you're using!
 //#define DHTTYPE DHT11   // DHT 11
 //#define DHTTYPE DHT22   // DHT 22  (AM2302)
 //#define DHTTYPE DHT22   // DHT 21 (AM2301)
- */
+
  
-// Only enable one config
-#define DJW // Set for Dan's sensors
-//#define VIC // Set for Vic's sensors
-
 #ifdef DJW
-#define DHTTYPE DHT22   // DHT 21 (AM2301)
-#define DHTPIN D2  // modify to the pin we connected
+  #define DHTTYPE DHT22   // DHT 21 (AM2301)
+  #define DHTPIN D2  // modify to the pin we connected
+  const String SENSORNAME = "DHT22";
 #elif VIC
-#define DHTTYPE DHT11
-#define DHTPIN 2  // modify to the pin we connected <- remove the D in pin name for generic ESP8266 boards
+  #define DHTTYPE DHT11
+  #define DHTPIN 2  // modify to the pin we connected <- remove the D in pin name for generic ESP8266 boards
+  //Name of sensor for  logs
+  const String SENSORNAME = "DHT11-1";
 #endif
-
 DHT dht(DHTPIN, DHTTYPE);
 
 
-//Name of sensor for  logs
-const String SENSORNAME = "DHT11-1";
-
 
 /************************* WiFi Access Point *********************************/
-
-//#define WLAN_SSID       "...your"
-//#define WLAN_PASS       "...your password..."
 // WiFi credentials.
 #ifdef DJW
 const char* WLAN_SSID = "DickStorm";
@@ -86,10 +84,10 @@ String deviceID;
 #define AIO_SERVERPORT  1883                   // use 8883 for SSL
 //#define AIO_USERNAME    "...your AIO username (see https://accounts.adafruit.com)..."
 //#define AIO_KEY         "...your AIO key..."
-#define AIO_USERNAME  "username"
-#define AIO_KEY       "aio_key_value"
+#define AIO_USERNAME  "dwolshin"
+#define AIO_KEY       "aio_Pzun23CfIfROr4OWViFPvEZAKtkh"
 
-
+/************************* Define EEPROM structure *********************************/
 
 // The neatest way to access variables stored in EEPROM is using a structure
 // NOTE this struct should be pre-populated by the setup script, stored in a seperate PRIVATE repo to hold sensitive info like API keys
@@ -184,7 +182,7 @@ void setup() {
 
 
   //Added this mqtt_connect to setup, so we can pub the inital ON state
- // MQTT_connect();
+ MQTT_connect();
 
   if (! onoffbuttonpub.publish(1)) {
     Serial.println(F("Failed"));
@@ -233,25 +231,25 @@ void loop() {
   jsonDoc["value"] = ambientT;
 
 
-  /* Use a JSON lib insead of creating manually
+  //Use a JSON lib insead of creating manually
     // We're going to start making a JSON string of a ton of data that we're going to post to a data lake
-    String JSON = "{";
-    JSON += "\"host\":" + deviceID + "\",\"time\":\"" + now() + "\"";
-    readSensors(JSON);    // Read all of the sensors, each appending to the JSON
-    JSON += "}";  // Close the string.
-    Serial.println(JSON);
+  //  String JSON = "{";
+  //  JSON += "\"host\":" + deviceID + "\",\"time\":\"" + now() + "\"";
+   // readSensors(JSON);    // Read all of the sensors, each appending to the JSON
+  //  JSON += "}";  // Close the string.
+   // Serial.println(JSON);
 
     //Convert the string to a char array for publishing
 
     // Length (with one extra character for the null terminator)
-    int str_len = JSON.length() + 1;
+ //   int str_len = JSON.length() + 1;
 
     // Prepare the character array (the buffer)
-    char char_array[str_len];
-
+  //  char char_array[str_len];
+//
     // Copy it over
-    JSON.toCharArray(char_array, str_len);
-  */
+    //JSON.toCharArray(char_array, str_len);
+
 
   delay(5000); // Wait 5 seconds between sensor reads
 
@@ -291,7 +289,7 @@ void loop() {
 
   //Check if onoff feed is ON:
 
-/*
+
   if (strcmp((char *)onoffbuttonsub.lastread, "ON") == 0) { // check if feed value matchs text string "ON"
 
     //Publish the JSON to the feed
@@ -318,7 +316,7 @@ void loop() {
     Serial.println("Feed is off server side - value is:");
     Serial.print((char *)onoffbuttonsub.lastread);
   }
-*/
+
 
   // ping the server to keep the mqtt connection alive
   // NOT required if you are publishing once every KEEPALIVE seconds
