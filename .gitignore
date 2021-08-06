@@ -34,3 +34,4 @@
 *.key
 src/dv_aws_iot_test/secrets.h
 src/dv_certstore_test/secrets.h
+src/dv-ota-update-test/secrets.h
