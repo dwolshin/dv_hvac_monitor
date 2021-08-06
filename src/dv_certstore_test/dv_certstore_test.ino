@@ -1,8 +1,3 @@
-//Based on example from:
-//
-// Mar 2018 by Earle F. Philhower, III
-// Released to the public domain
-
 #include <ESP8266WiFi.h>
 #include <CertStoreBearSSL.h>
 #include <time.h>
@@ -14,8 +9,8 @@
 //#define VIC
 #include "secrets.h" //include MUST come after user definition
 
+//these are for holding the AWS private key and cert, stored in flash
 #define MAX_PEM_SIZE 4096 // max size of PEM certs
-
 char clientKeyStr[MAX_PEM_SIZE];
 char clientCertStr[MAX_PEM_SIZE];
 
@@ -24,8 +19,6 @@ char clientCertStr[MAX_PEM_SIZE];
 //const char* WLAN_SSID = "Your SSID";
 //const char* WLAN_PASS = "Your Password";
 
-//setup for MQTT
-void msgReceived(char* topic, byte* payload, unsigned int len);
 
 // Find this awsEndpoint in the AWS Console: Manage - Things, choose your thing
 // choose Interact, its the HTTPS Rest endpoint
@@ -38,7 +31,11 @@ BearSSL::CertStore certStore;
 BearSSL::WiFiClientSecure wifiClient;
 BearSSL::X509List *clientCert;
 BearSSL::PrivateKey *clientKey;
+//setup to listen for MQTT messages
+void msgReceived(char* topic, byte* payload, unsigned int len);
+//MQTT pubsub client 
 PubSubClient pubSubClient(awsEndpoint, 8883, msgReceived, wifiClient); 
+
 
 /* Set up values for your repository and binary names */
 #define GHOTA_USER "dwolshin"
@@ -48,14 +45,21 @@ PubSubClient pubSubClient(awsEndpoint, 8883, msgReceived, wifiClient);
 #define GHOTA_ACCEPT_PRERELEASE 0
 #include <ESP_OTA_GitHub.h>
 
-// Initialise Update Code
+// Initialise OTA Update Code
 ESPOTAGitHub ESPOTAGitHub(&certStore, GHOTA_USER, GHOTA_REPO, GHOTA_CURRENT_TAG, GHOTA_BIN_FILE, GHOTA_ACCEPT_PRERELEASE);
 
+
+
+/* SKETCH SETUP SSSSSSSSSSSSSSSSSS
+ S  
+ S  
+ */
 void setup() {
   Serial.begin(115200);
   Serial.println();
   Serial.println();
 
+  //init the CA cert store from flash
   LittleFS.begin();
    int numCerts = certStore.initCertStore(LittleFS, PSTR("/certs.idx"), PSTR("/certs.ar"));
   Serial.printf("Number of CA certs read: %d\n", numCerts);
@@ -98,6 +102,8 @@ void setup() {
     Serial.println(ESPOTAGitHub.getLastError());
     }
     /* End of check and upgrade code */
+
+ //load the certificates and private key for talking to AWS
  File cert = LittleFS.open("/DJWESP8266.cert.pem", "r");
   clientCert = new X509List(cert, cert.size());
   cert.close();
@@ -105,43 +111,19 @@ void setup() {
    File key = LittleFS.open("/DJWESP8266.private.key", "r");
   clientKey =new BearSSL::PrivateKey(key, key.size());
   key.close();
-  
-
-/*
- //open AWS cert and private key from littleFS 
-  File cert = LittleFS.open("/DJWESP8266.cert.pem", "r"); //can be .der file as well
-  File key = LittleFS.open("/DJWESP8266.private.key", "r");
-cert.readBytes(clientCertStr, cert.size()); //copy certificate from file to char array
-  key.readBytes(clientKeyStr, key.size()); //same for private key
-   clientCert = new BearSSL::X509List(clientCertStr);
-  clientKey = new  BearSSL::PrivateKey(clientKeyStr);  
     
-    BearSSL::WiFiClientSecure *bear = new BearSSL::WiFiClientSecure();
-  // Integrate the cert store with this connection
-  bear->setCertStore(&certStore);
-  Serial.printf("Attempting to fetch https://github.com/...\n");
-  fetchURL(bear, "github.com", 443, "/");  
-  delete bear;
-  */
-
-  
 }
 
 //global for main loop
 unsigned long lastPublish;
 int msgCount;
-
+/* MAIN LOOP MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+ M  
+ M  
+ */
 void loop() {
 
-  
-  //  BearSSL::WiFiClientSecure *bear = new BearSSL::WiFiClientSecure();
-  // Integrate the cert store with this connection
-  //bear->setCertStore(&certStore);
- 
-  //pubSubClient.setClient(bear);
-  //read in the client cert and private keys and set them on the client
-  
-  
+    
 // set the cert store and keys for this connection  
   wifiClient.setClientRSACert(clientCert,clientKey);
  wifiClient.setCertStore(&certStore);
@@ -162,8 +144,10 @@ void loop() {
 
 }
 
-
-
+/* msgReceived ***********************
+ *  
+ *   
+ */
 void msgReceived(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message received on "); Serial.print(topic); Serial.print(": ");
   for (int i = 0; i < length; i++) {
@@ -172,6 +156,10 @@ void msgReceived(char* topic, byte* payload, unsigned int length) {
   Serial.println();
 }
 
+/* pubSubCheckConnect ***********************
+ *   
+ *  
+ */
 void pubSubCheckConnect() {
   if ( ! pubSubClient.connected()) {
     Serial.print("PubSubClient connecting to: "); Serial.print(awsEndpoint);
@@ -185,6 +173,11 @@ void pubSubCheckConnect() {
   pubSubClient.loop();
 }
 
+
+/*setCurrentTime ***********************
+ * 
+ * 
+ */
 void setCurrentTime() {
   configTime(3 * 3600, 0, "3.pool.ntp.org", "time.nist.gov");
 
@@ -201,7 +194,10 @@ void setCurrentTime() {
   Serial.print("Current time: "); Serial.print(asctime(&timeinfo));
 }
 
-// Set time via NTP, as required for x.509 validation
+/*setClock
+ * Set time via NTP, as required for x.509 validation
+ * 
+ */
 void setClock() {
   configTime(3 * 3600, 0, "0.pool.ntp.org", "time.nist.gov");
 
@@ -219,46 +215,26 @@ void setClock() {
   Serial.print(asctime(&timeinfo));
 }
 
-
-// Try and connect using a WiFiClientBearSSL to specified host:port and dump URL
-void fetchURL(BearSSL::WiFiClientSecure *client, const char *host, const uint16_t port, const char *path) {
-  if (!path) {
-    path = "/";
-  }
-
-  Serial.printf("Trying: %s:443...", host);
-  client->connect(host, port);
-  if (!client->connected()) {
-    Serial.printf("*** Can't connect. ***\n-------\n");
-    return;
-  }
-  Serial.printf("Connected!\n-------\n");
-  client->write("GET ");
-  client->write(path);
-  client->write(" HTTP/1.0\r\nHost: ");
-  client->write(host);
-  client->write("\r\nUser-Agent: ESP8266\r\n");
-  client->write("\r\n");
-  uint32_t to = millis() + 5000;
-  if (client->connected()) {
-    do {
-      char tmp[32];
-      memset(tmp, 0, 32);
-      int rlen = client->read((uint8_t*)tmp, sizeof(tmp) - 1);
-      yield();
-      if (rlen < 0) {
-        break;
-      }
-      // Only print out first line up to \r, then abort connection
-      char *nl = strchr(tmp, '\r');
-      if (nl) {
-        *nl = 0;
-        Serial.print(tmp);
-        break;
-      }
-      Serial.print(tmp);
-    } while (millis() < to);
-  }
-  client->stop();
-  Serial.printf("\n-------\n");
-}
+/****
+*Includes code from example:
+* Mar 2018 by Earle F. Philhower, III
+* Released to the public domain
+*
+*
+ * Includes code from example
+  WiFiClientBearSSL- SSL client/server for esp8266 using BearSSL libraries
+  - Mostly compatible with Arduino WiFi shield library and standard
+    WiFiClient/ServerSecure (except for certificate handling).
+  Copyright (c) 2018 Earle F. Philhower, III
+  This library is free software; you can redistribute it and/or
+  modify it under the terms of the GNU Lesser General Public
+  License as published by the Free Software Foundation; either
+  version 2.1 of the License, or (at your option) any later version.
+  This library is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+  Lesser General Public License for more details.
+  You should have received a copy of the GNU Lesser General Public
+  License along with this library; if not, write to the Free Software
+  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+*/
