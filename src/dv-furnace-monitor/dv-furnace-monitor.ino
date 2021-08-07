@@ -2,45 +2,55 @@
 //OTA update enabled
 //Posting live DHT sensor data to AWS IOT
 
-#define ARDUINOJSON_USE_LONG_LONG 1
-#include <ESP8266WiFi.h>
-#include <CertStoreBearSSL.h>
-#include <time.h>
-#include <LittleFS.h>
-#include <PubSubClient.h>
-#include <DHT.h>
-#include <NTPClient.h>
-#include <WiFiUdp.h>
-#include "secrets.h"
+#define ARDUINOJSON_USE_LONG_LONG 1  
+
+#include <ESP8266WiFi.h> //ESP8266WiFi at version 1.0 from ESPcore 3.0.2
+#include <LittleFS.h> //LittleFS at version 0.1.0 from core 3.0.2
+#include <PubSubClient.h> // PubSubClient at version 2.8 
+#include "DHTesp.h" // Click here to get the library: http://librarymanager/All#DHTesp
+#include <NTPClient.h> // NTPClient at version 3.2.0
+#include <WiFiUdp.h>  // part of ESP8266wifi 1.0 from ESP core 3.0.2
+#include <ArduinoJson.h> //ArduinoJson at version 6.18.3
+
 //Set only ONE user at a time
 #define DJW
 //#define VIC
-#include "secrets.h" //include MUST come after user definition
+//Include MUST come after user definition - contains secrets for your local setup
+#include "secrets.h" // <- do NOT check in this file!!! 
 
 
-/*********************** DHT Setup*********************************/
-  
-// The DHT11 Elegoo module has 3 pins: viewed from top, pins down, left to right - Data, Power, Ground
-// The data pin is connected to the Arduino D2
-//NOTE for nodeMCU have to specify Dx for the pin, not just x
-//#define DHTPIN D2  // modify to the pin we connected
-// Uncomment whatever type you're using!
-//#define DHTTYPE DHT11   // DHT 11
-//#define DHTTYPE DHT22   // DHT 22  (AM2302)
-//#define DHTTYPE DHT22   // DHT 21 (AM2301)
 
- 
+ /*************************************************************/
+ //Set local user/device config here
 #ifdef DJW
   #define DHTTYPE DHT22   // DHT 21 (AM2301)
   #define DHTPIN D2  // modify to the pin we connected
-  const String SENSORNAME = "DHT22";
-#elif VIC
+ 
+  const String deviceName = "DJWESP8266-1";
+  const String sensorName = "DHT22-1";
+  const String certFileName = "/DJWESP8266-1.cert.pem";
+  const String keyFileName = "/DJWESP8266-1.private.key";
+  
+  /*
+  const String deviceName = "DJWESP8266-2";
+  const String sensorName = "DHT22-2";
+  String certFileName = "/DJWESP8266-2.cert.pem";
+  const String keyFileName = "/DJWESP8266-2.private.key";
+*/
+#endif
+  
+#ifdef VIC
   #define DHTTYPE DHT11
   #define DHTPIN 2  // modify to the pin we connected <- remove the D in pin name for generic ESP8266 boards
   //Name of sensor for  logs
-  const String SENSORNAME = "DHT11-1";
+  const String deviceName = "VICESP8266-1";
+  const String sensorName = "DHT11-1";
+  const String certFileName = "/VICESP8266.cert.pem";
+  const String keyFileName = "/VICESP8266.private.key";
 #endif
-DHT dht(DHTPIN, DHTTYPE);
+
+//DHT dht(DHTPIN, DHTTYPE);
+DHTesp dht;
 
 
 //these are for holding the AWS private key and cert, stored in flash
@@ -81,7 +91,7 @@ PubSubClient pubSubClient(awsEndpoint, 8883, msgReceived, wifiClient);
 #define GHOTA_CURRENT_TAG "1.0.2"
 #define GHOTA_BIN_FILE "djw-ota-update-test.ino.nodemcu.bin"
 #define GHOTA_ACCEPT_PRERELEASE 0
-#include <ESP_OTA_GitHub.h>
+#include <ESP_OTA_GitHub.h> // ESP_OTA_GitHub at version 0.0.3
 
 // Initialise OTA Update Code
 ESPOTAGitHub ESPOTAGitHub(&certStore, GHOTA_USER, GHOTA_REPO, GHOTA_CURRENT_TAG, GHOTA_BIN_FILE, GHOTA_ACCEPT_PRERELEASE);
@@ -94,6 +104,7 @@ ESPOTAGitHub ESPOTAGitHub(&certStore, GHOTA_USER, GHOTA_REPO, GHOTA_CURRENT_TAG,
  */
 void setup() {
   Serial.begin(115200);
+  delay(1000);
   Serial.println();
   Serial.println();
 
@@ -142,17 +153,24 @@ void setup() {
     /* End of check and upgrade code */
 
  //load the certificates and private key for talking to AWS
- File cert = LittleFS.open("/DJWESP8266.cert.pem", "r");
+ File cert = LittleFS.open( certFileName, "r");
   clientCert = new X509List(cert, cert.size());
+  Serial.print("Cert size is:");
+  Serial.println(cert.size());
   cert.close();
   
-   File key = LittleFS.open("/DJWESP8266.private.key", "r");
+   File key = LittleFS.open(keyFileName, "r");
   clientKey =new BearSSL::PrivateKey(key, key.size());
+  Serial.print("Client Key size is:");
+  Serial.println(key.size());
   key.close();
 
   //init DHT sensor
   Serial.println("Starting DHT Sensor");
-  dht.begin();
+  //dht.begin();
+
+  /*****DISABLED - no sensor */
+  //dht.setup(DHTPIN, DHTesp::DHT22);
     
 }
 
@@ -181,8 +199,8 @@ void loop() {
       DynamicJsonDocument jsonDoc(512);
     
       //add the sensorname, host and time to the JSON doc
-      jsonDoc["sensorname"] = SENSORNAME;
-      jsonDoc["host"] = "DJWESP8266";
+      jsonDoc["sensorname"] = sensorName;
+      jsonDoc["deviceName"] = deviceName;
       
       epochTime = getTime();
       
@@ -196,8 +214,9 @@ void loop() {
        * Add in new snsor readings here
        */
       //read a sensor, pass in the jsonObj 
-
-      readDHT(jsonObj); //read a DHT sensor
+       
+       /*****DISABLED - no sensor */
+       //readDHT(jsonObj); //read a DHT sensor
 
 
 
@@ -234,9 +253,10 @@ void readDHT(JsonObject &jsonObj) {
   float ambientT, ambientH;
       
   // DHT Read Ambient Temp and Humidity and add them to the JSON
-  ambientT = dht.readTemperature() * 9 / 5 + 32; // Convert to Farenheight
-
-  ambientH = dht.readHumidity();
+  //ambientT = dht.readTemperature() * 9 / 5 + 32; // Convert to Farenheight
+  
+  ambientT = dht.getTemperature() * 9 / 5 + 32; // Convert to Farenheight
+  ambientH = dht.getHumidity();
 
   
 //store data in the json doc in the key = value format below
