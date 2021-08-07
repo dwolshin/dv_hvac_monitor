@@ -4,8 +4,8 @@
 
 #define ARDUINOJSON_USE_LONG_LONG 1  
 
-#include <ESP8266WiFi.h> //ESP8266WiFi at version 1.0 from ESPcore 3.0.2
-#include <LittleFS.h> //LittleFS at version 0.1.0 from core 3.0.2
+#include <ESP8266WiFi.h> //ESP8266WiFi at version 1.0 from ESP core 3.0.2
+#include <LittleFS.h> //LittleFS at version 0.1.0 from ESP core 3.0.2
 #include <PubSubClient.h> // PubSubClient at version 2.8 
 #include "DHTesp.h" // Click here to get the library: http://librarymanager/All#DHTesp
 #include <NTPClient.h> // NTPClient at version 3.2.0
@@ -186,7 +186,7 @@ unsigned long epochTime;
 void loop() {
 
 
-  //Don't block the main loop, but check elapsed time and only run the contense of this block ever 10s
+  //Don't block the main loop, but check elapsed time and only run the contents of this block ever 10s
   if (millis() - lastLoopDelay > 10000) {
         
     // set the cert store and keys for this connection  
@@ -270,9 +270,10 @@ void readDHT(JsonObject &jsonObj) {
   Serial.println(ambientH);
 
 }
-
-
-// Function that gets current epoch time
+/* getTime*******************************
+ *Function that gets current epoch time 
+ *
+ */
 unsigned long getTime() {
   timeClient.update();
   unsigned long now = timeClient.getEpochTime();
