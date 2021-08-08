@@ -109,8 +109,10 @@ void setup() {
   int numCerts = certStore.initCertStore(LittleFS, PSTR("/certs.idx"), PSTR("/certs.ar"));
   Serial.printf("Number of CA certs read: %d\n", numCerts);
   if (numCerts == 0) {
-    Serial.printf("No certs found. Did you unzip the connected device package from AWS and and upload the keys/certs to LittleFS directory before running?\n");
-    return; // Can't connect to anything w/o certs!
+    Serial.printf("ERROR: No certs found. Did you unzip the connected device package from AWS and and upload the keys/certs to LittleFS directory before running?\n");
+
+    delay(50000);
+   ESP.restart();// Can't connect to anything w/o certs!
   }
 
   // Connect to WiFi access point.
@@ -150,16 +152,25 @@ void setup() {
 
   //load the certificates and private key for talking to AWS
   File cert = LittleFS.open( certFileName, "r");
-  clientCert = new X509List(cert, cert.size());
+  int certSize = cert.size();
+  clientCert = new X509List(cert, certSize);
   Serial.print("Cert size is:");
-  Serial.println(cert.size());
+  Serial.println(certSize);
   cert.close();
 
   File key = LittleFS.open(keyFileName, "r");
-  clientKey = new BearSSL::PrivateKey(key, key.size());
+  int keySize = key.size();
+  clientKey = new BearSSL::PrivateKey(key, keySize);
   Serial.print("Client Key size is:");
-  Serial.println(key.size());
+  Serial.println(keySize);
   key.close();
+
+  if (keySize == 0 || certSize == 0 ) {
+    Serial.printf("ERROR: Cert or Key size is zero - did you upload the right keys/certs to LittleFS directory before running?\n");
+    delay(50000);
+    
+    ESP.restart();// Can't connect to anything w/o certs!
+  }
 
   //init DHT sensor
   Serial.println("Starting DHT Sensor");
