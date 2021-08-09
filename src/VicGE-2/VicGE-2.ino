@@ -15,8 +15,8 @@
 #include <DallasTemperature.h>  // Library for the OneWire Dallas Semi-based temp probe
 
 //Set only ONE user at a time
-//#define DJW
-#define VIC
+#define DJW
+//#define VIC
 //Include MUST come after user definition - contains secrets for your local setup
 #include "secrets.h" // <- do NOT check in this file!!! 
 
@@ -62,8 +62,8 @@ DallasTemperature dallasTempSensors(&dallasTempOneWire);
   #define DHTTYPE DHT22   // DHT 21 (AM2301)
   #define DHTPIN D2  // modify to the pin we connected
 
-  const String thingLocation = "MainStreet";
-  const String thingName = "DJW-MAIN-01";
+  const String thingLocation = "mainStreet";
+  const String thingName = "djwMain01";
   const String certFileName = "/DJW-MAIN-01-certificate.pem.crt";
   const String keyFileName = "/DJW-MAIN-01-private.pem.key";
   
@@ -223,12 +223,8 @@ void setup() {
 
     ESP.restart();// Can't connect to anything w/o certs!
   }
-  //init DHT sensor
-  //  Serial.println("Starting DHT Sensor");
-  //dht.begin();
 
   /*****DISABLED - no sensor */
-  //dht.setup(DHTPIN, DHTesp::DHT22);
     
 }
 
@@ -258,7 +254,7 @@ void loop() {
     //Create the JSON document for holding sensor data
     DynamicJsonDocument jsonDoc(MAX_JSON_DOC_SIZE);
    //jsonObj is a reference for passing around jsonDoc to write sensor data
-    JsonObject jsonObj = jsonDoc.as<JsonObject>(); 
+    //JsonObject jsonObj = jsonDoc.as<JsonObject>(); 
     // Create the header that goes into every MQTT post
     jsonDoc["eventType"] = "scheduledPoll";
     jsonDoc["location"] = thingLocation;
@@ -274,7 +270,6 @@ void loop() {
        * Add in new sensor readings here
        */
       //read a sensor, pass in the jsonObj 
-      //readDHT(jsonObj); //read a DHT sensor
 
 
     // Read the Dallas temp based probe connected to the circ pipes
@@ -340,10 +335,12 @@ void publishToFeed(DynamicJsonDocument &jsonDoc){
       //this is the magic to publish to the feed
 
       char feedName[128];
-      sprintf(feedName,"/%s", thingLocation);
-
+      sprintf(feedName,"/%s/%s",thingLocation , thingName );
+      Serial.print("Topic name is:");
+      Serial.println(feedName);
+      
       bool rc  = pubSubClient.publish(feedName , publishData);
-     
+
       //check if publish was successfull or not
       if (rc = true) {
         Serial.print("Published: "); Serial.println(publishData);
@@ -365,7 +362,7 @@ void publishToFeed(DynamicJsonDocument &jsonDoc){
 
 // Subroutine that collects the values of all of the sensors.
 //Pass in the json Object by ref
-void readDHT(JsonObject &jsonObj) {
+void readDHT(DynamicJsonDocument &jsonDoc) {
 
   //local vars to hold sensor data
   float ambientT, ambientH;
@@ -378,8 +375,8 @@ void readDHT(JsonObject &jsonObj) {
 
   
 //store data in the json doc in the key = value format below
-      jsonObj["temp"] = ambientT;
-      jsonObj["humidty"] = ambientH;
+      jsonDoc["temp"] = ambientT;
+      jsonDoc["humidty"] = ambientH;
      
   Serial.print("Temp: " );
   Serial.println(ambientT);
