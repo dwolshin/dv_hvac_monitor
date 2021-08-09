@@ -20,6 +20,11 @@
 //Include MUST come after user definition - contains secrets for your local setup
 #include "secrets.h" // <- do NOT check in this file!!! 
 
+//This sets the max payload size of the MQTT messages
+#define MAX_JSON_BUFFER_SIZE 1500
+//Setting the max JSON DOC size to be the same as the MQTT message size, but they are NOT the same
+#define MAX_JSON_DOC_SIZE 1500
+
 /*************************************************************/
 //Set local user/device config here
 #define pollInterval 10000  //How often to check the sensors, in millseconds
@@ -56,11 +61,12 @@ DallasTemperature dallasTempSensors(&dallasTempOneWire);
 #ifdef DJW
   #define DHTTYPE DHT22   // DHT 21 (AM2301)
   #define DHTPIN D2  // modify to the pin we connected
- 
-  const String deviceName = "DJWESP8266-1";
-  const String sensorName = "DHT22-1";
-  const String certFileName = "/DJWESP8266-1.cert.pem";
-  const String keyFileName = "/DJWESP8266-1.private.key";
+
+  const String thingLocation = "MainStreet";
+  const String thingName = "DJW-MAIN-01";
+  const String certFileName = "/DJW-MAIN-01-certificate.pem.crt";
+  const String keyFileName = "/DJW-MAIN-01-private.pem.key";
+  
   
   /*
   const String deviceName = "DJWESP8266-2";
@@ -79,7 +85,7 @@ DallasTemperature dallasTempSensors(&dallasTempOneWire);
 #endif
 
 //DHT dht(DHTPIN, DHTTYPE);
-//DHTesp dht;
+DHTesp dht;
 
 
 //these are for holding the AWS private key and cert, stored in flash
@@ -243,12 +249,16 @@ void loop() {
     // set the cert store and keys for this connection  
     wifiClient.setClientRSACert(clientCert,clientKey);
     wifiClient.setCertStore(&certStore);
-      
+    
+    //Check/maintain status of the MQTT connection  
     pubSubCheckConnect();
     
-    //DynamicJsonBuffer jsonBuffer;
-    DynamicJsonDocument jsonDoc(1024);
-
+    pubSubClient.setBufferSize(MAX_JSON_BUFFER_SIZE); //set the client buffer size, default of 128b is too small
+    
+    //Create the JSON document for holding sensor data
+    DynamicJsonDocument jsonDoc(MAX_JSON_DOC_SIZE);
+   //jsonObj is a reference for passing around jsonDoc to write sensor data
+    JsonObject jsonObj = jsonDoc.as<JsonObject>(); 
     // Create the header that goes into every MQTT post
     jsonDoc["eventType"] = "scheduledPoll";
     jsonDoc["location"] = thingLocation;
@@ -257,6 +267,14 @@ void loop() {
     epochTime = getTime();
     jsonDoc["time"] = epochTime;
     jsonDoc["pollInterval"] = pollInterval;
+
+
+      /****************
+       * 
+       * Add in new sensor readings here
+       */
+      //read a sensor, pass in the jsonObj 
+      //readDHT(jsonObj); //read a DHT sensor
 
 
     // Read the Dallas temp based probe connected to the circ pipes
@@ -268,38 +286,8 @@ void loop() {
     // Read the microphone value, connected to the Analog Input pin
     jsonDoc[aInName] = analogRead(micSensorPin);
 
-    JsonObject jsonObj = jsonDoc.as<JsonObject>(); //jsonObj is a reference for passing around jsonDoc to write sensor data
-
-
-
-      /****************
-       * 
-       * Add in new snsor readings here
-       */
-      //read a sensor, pass in the jsonObj 
-       
-       /*****DISABLED - no sensor */
-       //readDHT(jsonObj); //read a DHT sensor
-
-
-
-     //Print out the jsonDoc to Serial before publishing     
-     //serializeJson(jsonDoc, Serial);
-    
-      //need to convert the doc to a char array for publish to MQTT feed
-      int b = serializeJson(jsonDoc, publishData);
-      Serial.print("JSON doc in bytes = ");
-      Serial.println(b, DEC);
-        
-      //this is the magic to publish to the feed
-// I can't figure out how to append a leading slash to the Const and pass it in 
-//      bool status = pubSubClient.publish(String("/" + thingLocation), publishData);
-      bool status = pubSubClient.publish("/GoldenEagle", publishData);
-      if (status=1) {
-        Serial.print("Published: "); Serial.println(publishData);        
-      } else {
-        
-      }
+       //Check for errors and publish the sensor data
+    publishToFeed(jsonDoc);
     
      //update the last publish time
      lastLoopDelay = millis();
@@ -308,12 +296,73 @@ void loop() {
 
 }
 
+/*publishToFeed *************************
+ * 
+ * MQTT post function with size validation and error checking 
+ */
+
+void publishToFeed(DynamicJsonDocument &jsonDoc){ 
+
+  /* DEBUG*****************************
+   // Fill up the doc with some test data
+   for (int i = 0; i < 40; i++) {
+      String s = "Value" + String(i);
+      //jsonDoc[s] = "short value";
+       jsonDoc[s] = epochTime;   
+    }
+ */
+ 
+  //holds the size of the Serialized JSON doc in bytes
+    int jdocSize = measureJson(jsonDoc);
+
+    /*DEBUG*****************************
+    //Print out the jsonDoc to Serial before publishing
+    serializeJson(jsonDoc, Serial);
+    */
+
+    Serial.print("JSON buffer size:");
+    Serial.println(jsonDoc.memoryUsage());
+    Serial.print("Size of Serialized JSON data: ");
+    Serial.println(jdocSize);
+
+    if ( jsonDoc.overflowed()){
+       Serial.print("ERROR: jsonDoc memory pool was too small - some values are missing from the JsonDocument!!!");
+    }
+    
+    //check if the Serialized JSON doc is larger than the MAX MQTT payload size
+    if (jdocSize < MAX_JSON_BUFFER_SIZE) {
+      //need to convert the doc to a char array for publish to MQTT feed
+      char publishData[MAX_JSON_BUFFER_SIZE];
+      int b = serializeJson(jsonDoc, publishData);
+      Serial.print("JSON doc in bytes = ");
+      Serial.println(b, DEC);
+
+      //this is the magic to publish to the feed
+
+      char feedName[128];
+      sprintf(feedName,"/%s", thingLocation);
+
+      bool rc  = pubSubClient.publish(feedName , publishData);
+     
+      //check if publish was successfull or not
+      if (rc = true) {
+        Serial.print("Published: "); Serial.println(publishData);
+      } else {
+        Serial.println("ERROR: MQTT publish failed, either connection lost or message too large!!!");
+      }
+    } else {
+      Serial.print("ERROR: Size of Serialized JSON:");
+      Serial.print(jdocSize);
+      Serial.print("b exceeds max MQTT message size: ");
+      Serial.print(MAX_JSON_BUFFER_SIZE);
+    }
+}
 
 /* readSensors ************************
  * THIS IS COMMENTED OUT ALTOGETHER. IT SEEMED CLEANER (in my case) TO SIMPLY DO IT IN MAIN 
  *  
  */
-/*
+
 // Subroutine that collects the values of all of the sensors.
 //Pass in the json Object by ref
 void readDHT(JsonObject &jsonObj) {
@@ -323,7 +372,7 @@ void readDHT(JsonObject &jsonObj) {
       
   // DHT Read Ambient Temp and Humidity and add them to the JSON
   //ambientT = dht.readTemperature() * 9 / 5 + 32; // Convert to Farenheight
-  
+   
   ambientT = dht.getTemperature() * 9 / 5 + 32; // Convert to Farenheight
   ambientH = dht.getHumidity();
 
@@ -339,7 +388,7 @@ void readDHT(JsonObject &jsonObj) {
   Serial.println(ambientH);
 
 }
-*/
+
 
 // Function that gets current epoch time
 unsigned long getTime() {
