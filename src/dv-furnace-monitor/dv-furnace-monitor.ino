@@ -2,51 +2,84 @@
 //OTA update enabled
 //Posting live DHT sensor data to AWS IOT
 
-//#define ARDUINOJSON_USE_LONG_LONG 1
-#include <ESP8266WiFi.h> //ESP8266WiFi at version 1.0 from ESP core 3.0.2
-#include <LittleFS.h> //LittleFS at version 0.1.0 from ESP core 3.0.2
+#define ARDUINOJSON_USE_LONG_LONG 1
+
+#include <ESP8266WiFi.h> //ESP8266WiFi at version 1.0 from ESPcore 3.0.2
+#include <LittleFS.h> //LittleFS at version 0.1.0 from core 3.0.2
+#include <PubSubClient.h> // PubSubClient at version 2.8 
 #include "DHTesp.h" // Click here to get the library: http://librarymanager/All#DHTesp
 #include <NTPClient.h> // NTPClient at version 3.2.0
 #include <WiFiUdp.h>  // part of ESP8266wifi 1.0 from ESP core 3.0.2
 #include <ArduinoJson.h> //ArduinoJson at version 6.18.3
-#include <PubSubClient.h> // PubSubClient at version 2.8 
-
+#include <OneWire.h> //Used by the Dallas Temp library
+#include <DallasTemperature.h>  // Library for the OneWire Dallas Semi-based temp probe
 
 //Set only ONE user at a time
-#define DJW
-//#define VIC
+//#define DJW
+#define VIC
 //Include MUST come after user definition - contains secrets for your local setup
 #include "secrets.h" // <- do NOT check in this file!!! 
 
-//This sets the max payload size of the MQTT messages
-#define MAX_JSON_BUFFER_SIZE 1500
-//Setting the max JSON DOC size to be the same as the MQTT message size, but they are NOT the same
-#define MAX_JSON_DOC_SIZE 1500
-
-
 /*************************************************************/
 //Set local user/device config here
-#ifdef DJW
-#define DHTTYPE DHT22   // DHT 21 (AM2301)
-#define DHTPIN D2  // modify to the pin we connected
-const String deviceName = "DJWESP8266-1";
-const String sensorName = "DHT22-1";
-const String certFileName = "/DJW-MAIN-01-certificate.pem.crt";
-const String keyFileName = "/DJW-MAIN-01-private.pem.key";
-#endif
+#define pollInterval 10000  //How often to check the sensors, in millseconds
+//These first six sensors are optocouplers that are sensing the state of 26VAC HVAC calls
+//The optocoupers provide an active low digital signal, connected directly to an I/O pin
+#define dInApin  15
+#define dInAName "zonesDemand"      //Active when ANY of the 9 zones are calling
+#define dInBpin  14
+#define dInBName "boilerDemand"     //Active when the mixer controller says we need heat
+#define dInCpin  13
+#define dInCName "DHWDemand"        //Active when we need to heat water
+#define dInDpin  12
+#define dInDName "snowMeltDemand"   //Active when the front walk needs melting
+#define dInEpin  5
+#define dInEName "boiler1Activate"   //Active when Boiler 1 is asked to fire
+#define dInFpin  4
+#define dInFName "boiler2Activate"   //Active when Boiler 2 is asked to fire
+//Setup the OneWire connection to the thermal probe attached to the boiler loop pipes
+/********************************************************************/
+// Data wire from the DS18B20 is plugged into pin 2 on the Arduino 
+#define dallasTempProbeOneWireBus 2 
+/********************************************************************/
+//Define the microphone pin
+int micSensorPin = A0;    // select the input pin for microphone
+#define aInName "microphone"
 
+// Setup a oneWire instance to communicate with any OneWire devices  
+// (not just Maxim/Dallas temperature ICs) 
+OneWire dallasTempOneWire(dallasTempProbeOneWireBus); 
+/********************************************************************/
+// Pass our oneWire reference to Dallas Temperature. 
+DallasTemperature dallasTempSensors(&dallasTempOneWire);
+
+#ifdef DJW
+  #define DHTTYPE DHT22   // DHT 21 (AM2301)
+  #define DHTPIN D2  // modify to the pin we connected
+ 
+  const String deviceName = "DJWESP8266-1";
+  const String sensorName = "DHT22-1";
+  const String certFileName = "/DJWESP8266-1.cert.pem";
+  const String keyFileName = "/DJWESP8266-1.private.key";
+  
+  /*
+  const String deviceName = "DJWESP8266-2";
+  const String sensorName = "DHT22-2";
+  String certFileName = "/DJWESP8266-2.cert.pem";
+  const String keyFileName = "/DJWESP8266-2.private.key";
+*/
+#endif
+  
 #ifdef VIC
-#define DHTTYPE DHT11
-#define DHTPIN 2  // modify to the pin we connected <- remove the D in pin name for generic ESP8266 boards
-//Name of sensor for  logs
-const String deviceName = "VICESP8266-1";
-const String sensorName = "DHT11-1";
-const String certFileName = "VO-certificate.pem.crt";
-const String keyFileName = "/VOESP8266..key";
+  //Name of sensor and location for  logs
+  const String thingLocation = "GoldenEagle";
+  const String thingName = "VicGE-1";
+  const String certFileName = "/VicGE-1-certificate.pem.crt";
+  const String keyFileName = "/VicGE-1-private.pem.key";
 #endif
 
 //DHT dht(DHTPIN, DHTTYPE);
-DHTesp dht;
+//DHTesp dht;
 
 
 //these are for holding the AWS private key and cert, stored in flash
@@ -66,6 +99,8 @@ NTPClient timeClient(ntpUDP, "0.pool.ntp.org");
 
 // Find this awsEndpoint in the AWS Console: Manage - Things, choose your thing
 // choose Interact, its the HTTPS Rest endpoint
+// This was Dan's const char* awsEndpoint = "an1v1kdoueaep-ats.iot.us-west-2.amazonaws.com";
+// Vic's endpoint for VicGE-1
 const char* awsEndpoint = "a2kuhsw8cpcus8-ats.iot.us-west-2.amazonaws.com";
 
 // A single, global CertStore which can be used by all
@@ -77,8 +112,8 @@ BearSSL::X509List *clientCert;
 BearSSL::PrivateKey *clientKey;
 //setup to listen for MQTT messages
 void msgReceived(char* topic, byte* payload, unsigned int len);
-//MQTT pubsub client
-PubSubClient pubSubClient(awsEndpoint, 8883, msgReceived, wifiClient);
+//MQTT pubsub client 
+PubSubClient pubSubClient(awsEndpoint, 8883, msgReceived, wifiClient); 
 
 
 /* Set up values for your repository and binary names */
@@ -95,14 +130,26 @@ ESPOTAGitHub ESPOTAGitHub(&certStore, GHOTA_USER, GHOTA_REPO, GHOTA_CURRENT_TAG,
 
 
 /* SKETCH SETUP SSSSSSSSSSSSSSSSSS
-  S
-  S
-*/
+ S  
+ S  
+ */
 void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println();
   Serial.println();
+
+  //initialize the I/O pins that we're using.  These all read a boolean value
+  pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(dInApin, INPUT);
+  pinMode(dInBpin, INPUT);
+  pinMode(dInCpin, INPUT);
+  pinMode(dInDpin, INPUT);
+  pinMode(dInEpin, INPUT);
+  pinMode(dInFpin, INPUT);
+  //initialize the OneWire pin that we'll use for the temp probe
+  //initialize the Analog input pin that we're using for the microphone
+
 
   //init the CA cert store from flash
   LittleFS.begin();
@@ -110,11 +157,10 @@ void setup() {
   Serial.printf("Number of CA certs read: %d\n", numCerts);
   if (numCerts == 0) {
     Serial.printf("ERROR: No certs found. Did you unzip the connected device package from AWS and and upload the keys/certs to LittleFS directory before running?\n");
-
     delay(50000);
-   ESP.restart();// Can't connect to anything w/o certs!
+    ESP.restart();// Can't connect to anything w/o certs!
   }
-
+  
   // Connect to WiFi access point.
   Serial.println(); Serial.println();
   Serial.print("Connecting to ");
@@ -132,8 +178,8 @@ void setup() {
 
   setClock(); // Required for X.509 validation
 
-
-  /* This is the actual code to check and upgrade */
+ 
+/* This is the actual code to check and upgrade */
   Serial.println("Checking for update...");
   if (ESPOTAGitHub.checkUpgrade()) {
     Serial.print("Upgrade found at: ");
@@ -157,7 +203,7 @@ void setup() {
   Serial.print("Cert size is:");
   Serial.println(certSize);
   cert.close();
-
+  
   File key = LittleFS.open(keyFileName, "r");
   int keySize = key.size();
   clientKey = new BearSSL::PrivateKey(key, keySize);
@@ -168,156 +214,134 @@ void setup() {
   if (keySize == 0 || certSize == 0 ) {
     Serial.printf("ERROR: Cert or Key size is zero - did you upload the right keys/certs to LittleFS directory before running?\n");
     delay(50000);
-    
+
     ESP.restart();// Can't connect to anything w/o certs!
   }
-
   //init DHT sensor
-  Serial.println("Starting DHT Sensor");
+  //  Serial.println("Starting DHT Sensor");
   //dht.begin();
 
   /*****DISABLED - no sensor */
-  dht.setup(DHTPIN, DHTesp::DHT22);
-
+  //dht.setup(DHTPIN, DHTesp::DHT22);
+    
 }
 
 //global for main loop
 unsigned long lastLoopDelay;
 // Variable to save current epoch time
-unsigned long epochTime;
+unsigned long epochTime; 
 
 /* MAIN LOOP MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
-  M
-  M
-*/
+ M  
+ M  
+ */
 void loop() {
 
-
-  //Don't block the main loop, but check elapsed time and only run the contents of this block ever 10s
-  if (millis() - lastLoopDelay > 10000) {
-
-    // set the cert store and keys for this connection
-    wifiClient.setClientRSACert(clientCert, clientKey);
+  //Don't block the main loop, but check elapsed time and only run the contense of this block ever 10s
+  if (millis() - lastLoopDelay > pollInterval) {
+            
+    // set the cert store and keys for this connection  
+    wifiClient.setClientRSACert(clientCert,clientKey);
     wifiClient.setCertStore(&certStore);
-
-    //Check/maintain status of the MQTT connection
+      
     pubSubCheckConnect();
-
-    //Create the JSON document for holding sensor data
-    DynamicJsonDocument jsonDoc(MAX_JSON_DOC_SIZE);
-
-    //populate 
-    epochTime = getTime(); 
-   //add the sensorname, host and time to the JSON doc
-    jsonDoc["sensorname"] = sensorName;
-    jsonDoc["deviceName"] = deviceName;
-    jsonDoc["time"] = epochTime;
-
-   //jsonObj is a reference for passing around jsonDoc to write sensor data
-    JsonObject jsonObj = jsonDoc.as<JsonObject>(); 
-
-
-    /****************
-       Add in new snsor readings here
-    */
-    //read a sensor, pass in the jsonObj
-    readDHT(jsonObj); //read a DHT sensor
-
-
-
-    //Check for errors and publish the sensor data
-    publishToFeed(jsonDoc);
-     
-    //update the last publish time
-    lastLoopDelay = millis();
-  }
-
-
-}
-
-/*publishToFeed *************************
- * 
- * MQTT post function with size validation and error checking 
- */
-
-void publishToFeed(DynamicJsonDocument &jsonDoc){ 
-
-
-  
-  
-  /* DEBUG*****************************
-   // Fill up the doc with some test data
-   for (int i = 0; i < 40; i++) {
-      String s = "Value" + String(i);
-      //jsonDoc[s] = "short value";
-       jsonDoc[s] = epochTime;   
-    }
- */
- 
-  //holds the size of the Serialized JSON doc in bytes
-    int jdocSize = measureJson(jsonDoc);
-
-    /*DEBUG*****************************
-    //Print out the jsonDoc to Serial before publishing
-    serializeJson(jsonDoc, Serial);
-    */
-
-    Serial.print("JSON buffer size:");
-    Serial.println(jsonDoc.memoryUsage());
-    Serial.print("Size of Serialized JSON data: ");
-    Serial.println(jdocSize);
-
-    if ( jsonDoc.overflowed()){
-       Serial.print("ERROR: jsonDoc memory pool was too small - some values are missing from the JsonDocument!!!");
-    }
     
-    //check if the Serialized JSON doc is larger than the MAX MQTT payload size
-    if (jdocSize < MAX_JSON_BUFFER_SIZE) {
+    //DynamicJsonBuffer jsonBuffer;
+    DynamicJsonDocument jsonDoc(1024);
+
+    // Create the header that goes into every MQTT post
+    jsonDoc["eventType"] = "scheduledPoll";
+    jsonDoc["location"] = thingLocation;
+    jsonDoc["thingName"] = thingName;
+    jsonDoc["severity"] = "info";
+    epochTime = getTime();
+    jsonDoc["time"] = epochTime;
+    jsonDoc["pollInterval"] = pollInterval;
+
+    // Read the six boolean digital inputs
+    jsonDoc[dInAName] = !digitalRead(dInApin);
+    jsonDoc[dInBName] = !digitalRead(dInBpin);
+    jsonDoc[dInCName] = !digitalRead(dInCpin);
+    jsonDoc[dInDName] = !digitalRead(dInDpin);
+    jsonDoc[dInEName] = !digitalRead(dInEpin);
+    jsonDoc[dInFName] = !digitalRead(dInFpin);
+
+    // Read the Dallas temp based probe connected to the circ pipes
+    dallasTempSensors.requestTemperatures(); // Send the command to get temperature readings 
+    jsonDoc["dallasTemp"] = String(dallasTempSensors.getTempCByIndex(0));  // Why "byIndex"?  
+    // You can have more than one DS18B20 on the same bus.  
+    // 0 refers to the first IC on the wire
+
+    // Read the microphone value, connected to the Analog Input pin
+    jsonDoc[aInName] = analogRead(micSensorPin);
+
+    JsonObject jsonObj = jsonDoc.as<JsonObject>(); //jsonObj is a reference for passing around jsonDoc to write sensor data
+
+
+
+      /****************
+       * 
+       * Add in new snsor readings here
+       */
+      //read a sensor, pass in the jsonObj 
+       
+       /*****DISABLED - no sensor */
+       //readDHT(jsonObj); //read a DHT sensor
+
+
+
+     //Print out the jsonDoc to Serial before publishing     
+     //serializeJson(jsonDoc, Serial);
+    
       //need to convert the doc to a char array for publish to MQTT feed
-      char publishData[MAX_JSON_BUFFER_SIZE];
+      char publishData[1024];
       int b = serializeJson(jsonDoc, publishData);
       Serial.print("JSON doc in bytes = ");
       Serial.println(b, DEC);
-
+        
       //this is the magic to publish to the feed
-      bool rc = pubSubClient.publish("/sensors/dht", publishData);
-
-      //check if publish was successfull or not
-      if (rc = true) {
-        Serial.print("Published: "); Serial.println(publishData);
+// I can't figure out how to append a leading slash to the Const and pass it in 
+//      bool status = pubSubClient.publish(String("/" + thingLocation), publishData);
+      bool status = pubSubClient.publish("/GoldenEagle", publishData);
+      if (status=1) {
+        Serial.print("Published: "); Serial.println(publishData);        
       } else {
-        Serial.println("ERROR: MQTT publish failed, either connection lost or message too large!!!");
+        Serial.print("PubFail Status: "); Serial.println (status);         
+        Serial.print("Not Published: "); Serial.println(publishData);        
+        
       }
-    } else {
-      Serial.print("ERROR: Size of Serialized JSON:");
-      Serial.print(jdocSize);
-      Serial.print("b exceeds max MQTT message size: ");
-      Serial.print(MAX_JSON_BUFFER_SIZE);
-    }
+    
+     //update the last publish time
+     lastLoopDelay = millis();
+  }
+  
+
 }
 
+
 /* readSensors ************************
-
-
-*/
+ * THIS IS COMMENTED OUT ALTOGETHER. IT SEEMED CLEANER (in my case) TO SIMPLY DO IT IN MAIN 
+ *  
+ */
+/*
 // Subroutine that collects the values of all of the sensors.
 //Pass in the json Object by ref
 void readDHT(JsonObject &jsonObj) {
 
   //local vars to hold sensor data
   float ambientT, ambientH;
-
+      
   // DHT Read Ambient Temp and Humidity and add them to the JSON
   //ambientT = dht.readTemperature() * 9 / 5 + 32; // Convert to Farenheight
-
+  
   ambientT = dht.getTemperature() * 9 / 5 + 32; // Convert to Farenheight
   ambientH = dht.getHumidity();
 
-
-  //store data in the json doc in the key = value format below
-  jsonObj["temp"] = ambientT;
-  jsonObj["humidty"] = ambientH;
-
+  
+//store data in the json doc in the key = value format below
+      jsonObj["temp"] = ambientT;
+      jsonObj["humidty"] = ambientH;
+     
   Serial.print("Temp: " );
   Serial.println(ambientT);
 
@@ -325,10 +349,9 @@ void readDHT(JsonObject &jsonObj) {
   Serial.println(ambientH);
 
 }
-/* getTime*******************************
-  Function that gets current epoch time
-
 */
+
+// Function that gets current epoch time
 unsigned long getTime() {
   timeClient.update();
   unsigned long now = timeClient.getEpochTime();
@@ -336,9 +359,9 @@ unsigned long getTime() {
 }
 
 /* msgReceived ***********************
-
-
-*/
+ *  
+ *   
+ */
 void msgReceived(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message received on "); Serial.print(topic); Serial.print(": ");
   for (int i = 0; i < length; i++) {
@@ -348,11 +371,11 @@ void msgReceived(char* topic, byte* payload, unsigned int length) {
 }
 
 /* pubSubCheckConnect ***********************
-
-
-*/
+ *   
+ *  
+ */
 void pubSubCheckConnect() {
-  pubSubClient.setBufferSize(MAX_JSON_BUFFER_SIZE); //set the client buffer size, default of 128b is too small
+  pubSubClient.setBufferSize(1200); //set the client buffer size, default of 128b is too small
   if ( ! pubSubClient.connected()) {
     Serial.print("PubSubClient connecting to: "); Serial.print(awsEndpoint);
     while ( ! pubSubClient.connected()) {
@@ -366,9 +389,9 @@ void pubSubCheckConnect() {
 }
 
 /*setClock
-   Set time via NTP, as required for x.509 validation
-
-*/
+ * Set time via NTP, as required for x.509 validation
+ * 
+ */
 void setClock() {
   configTime(3 * 3600, 0, "0.pool.ntp.org", "time.nist.gov");
 
@@ -387,12 +410,12 @@ void setClock() {
 }
 
 /****
-  Includes code from example:
-  Mar 2018 by Earle F. Philhower, III
-  Released to the public domain
-
-
-   Includes code from example
+*Includes code from example:
+* Mar 2018 by Earle F. Philhower, III
+* Released to the public domain
+*
+*
+ * Includes code from example
   WiFiClientBearSSL- SSL client/server for esp8266 using BearSSL libraries
   - Mostly compatible with Arduino WiFi shield library and standard
     WiFiClient/ServerSecure (except for certificate handling).
