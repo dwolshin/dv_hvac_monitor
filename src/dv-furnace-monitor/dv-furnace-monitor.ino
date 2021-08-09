@@ -62,8 +62,8 @@ DallasTemperature dallasTempSensors(&dallasTempOneWire);
   #define DHTTYPE DHT22   // DHT 21 (AM2301)
   #define DHTPIN D2  // modify to the pin we connected
 
-  const String thingLocation = "mainStreet";
-  const String thingName = "djwMain01";
+  const char thingLocation[] =  "mainStreet";
+  const char thingName[] = "DJW-MAIN-01";
   const String certFileName = "/DJW-MAIN-01-certificate.pem.crt";
   const String keyFileName = "/DJW-MAIN-01-private.pem.key";
   
@@ -78,8 +78,8 @@ DallasTemperature dallasTempSensors(&dallasTempOneWire);
   
 #ifdef VIC
   //Name of sensor and location for  logs
-  const String thingLocation = "GoldenEagle";
-  const String thingName = "VicGE-1";
+  const char thingLocation[] = "GoldenEagel";
+  const char thingName[] = "VicGE-1";
   const String certFileName = "/VicGE-1-certificate.pem.crt";
   const String keyFileName = "/VicGE-1-private.pem.key";
 #endif
