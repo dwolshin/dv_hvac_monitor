@@ -15,8 +15,8 @@
 #include <DallasTemperature.h>  // Library for the OneWire Dallas Semi-based temp probe
 
 //Set only ONE user at a time
-#define DJW
-//#define VIC
+//#define DJW
+#define VIC
 //Include MUST come after user definition - contains secrets for your local setup
 #include "secrets.h" // <- do NOT check in this file!!! 
 
@@ -225,6 +225,7 @@ void setup() {
   }
 
   /*****DISABLED - no sensor */
+  //dht.setup(DHTPIN, DHTesp::DHT22);
     
 }
 
@@ -270,6 +271,7 @@ void loop() {
        * Add in new sensor readings here
        */
       //read a sensor, pass in the jsonObj 
+      //readDHT(jsonDoc); //read a DHT sensor
 
 
     // Read the Dallas temp based probe connected to the circ pipes
