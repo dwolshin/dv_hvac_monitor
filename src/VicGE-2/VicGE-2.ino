@@ -417,19 +417,6 @@ void msgReceived(char* topic, byte* payload, unsigned int length) {
     ESP.restart();// Force update check
 
   }
-  String rebootTopic =  "/remotereboot/" + thingName
-   if (strncmp(topic, "/remotereboot/" + thingName , sizeof(topic)) == 0) {
-
-    Serial.println();
-    Serial.println("!!!Force update message received!!!");
-    Serial.println();
-    Serial.print("--->Free Memeory During Force Update: "); Serial.println(ESP.getFreeHeap(), DEC);
-
-    pubSubClient.disconnect();
-
-    ESP.restart();// Force update check
-
-  }
 }
 
 /* pubSubCheckConnect ***********************
@@ -442,10 +429,10 @@ void pubSubCheckConnect() {
     Serial.print("PubSubClient connecting to: "); Serial.print(awsEndpoint);
     while ( ! pubSubClient.connected()) {
       Serial.print(".");
-      pubSubClient.connect("DJWESP8266");
+      pubSubClient.connect(thingName);
     }
     Serial.println(" connected");
-    pubSubClient.subscribe("/");
+    pubSubClient.subscribe("/forceupdate");
   }
   pubSubClient.loop();
 }
