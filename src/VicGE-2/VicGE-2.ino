@@ -405,21 +405,33 @@ void msgReceived(char* topic, byte* payload, unsigned int length) {
     Serial.print((char)payload[i]);
   }
 
-  if (strncmp(topic,"/forceupdate", sizeof(topic))==0){
-     Serial.println();
+  if (strncmp(topic, "/forceupdate", sizeof(topic)) == 0) {
+
+    Serial.println();
     Serial.println("!!!Force update message received!!!");
-   Serial.println();
-   
-     if (ESPOTAGitHub.doUpgrade()) {
-      Serial.println("Upgrade complete."); //This should never be seen as the device should restart on successful upgrade.
-    } else {
-      Serial.print("Unable to upgrade: ");
-      Serial.println(ESPOTAGitHub.getLastError());
-    }
-    
+    Serial.println();
+    Serial.print("--->Free Memeory During Force Update: "); Serial.println(ESP.getFreeHeap(), DEC);
+
+    pubSubClient.disconnect();
+
+    ESP.restart();// Force update check
+
   }
-  
+  String rebootTopic =  "/remotereboot/" + thingName
+   if (strncmp(topic, "/remotereboot/" + thingName , sizeof(topic)) == 0) {
+
+    Serial.println();
+    Serial.println("!!!Force update message received!!!");
+    Serial.println();
+    Serial.print("--->Free Memeory During Force Update: "); Serial.println(ESP.getFreeHeap(), DEC);
+
+    pubSubClient.disconnect();
+
+    ESP.restart();// Force update check
+
+  }
 }
+
 /* pubSubCheckConnect ***********************
  *   
  *  
