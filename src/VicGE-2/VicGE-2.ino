@@ -1,9 +1,3 @@
-// OK, Major hail mary pass.  GE-1 optocouplerss won't work.  I need to spin up GE-2
-// Sensors will be:
-// - One boiler loop (Dallas Temp)
-// - Two light sensors
-// - one DHT-11
-
 //main sketch
 //OTA update enabled
 //Posting live DHT sensor data to AWS IOT
@@ -13,7 +7,7 @@
 #include <ESP8266WiFi.h> //ESP8266WiFi at version 1.0 from ESPcore 3.0.2
 #include <LittleFS.h> //LittleFS at version 0.1.0 from core 3.0.2
 #include <PubSubClient.h> // PubSubClient at version 2.8 
-#include <DHTesp.h> // Click here to get the library: http://librarymanager/All#DHTesp
+#include "DHTesp.h" // Click here to get the library: http://librarymanager/All#DHTesp
 #include <NTPClient.h> // NTPClient at version 3.2.0
 #include <WiFiUdp.h>  // part of ESP8266wifi 1.0 from ESP core 3.0.2
 #include <ArduinoJson.h> //ArduinoJson at version 6.18.3
@@ -34,27 +28,24 @@
 /*************************************************************/
 //Set local user/device config here
 #define pollInterval 10000  //How often to check the sensors, in millseconds
-// Define the data pins that sensors are connected to.  First is the Temp and Humidity sensor
-  // We are using a DHT-11 Temp and Humidity module.
-  // The module has 3 pins:  Power, Ground, and a single data pin. It's OneWire
-//#include <dht_nonblocking.h>
-//#define DHT_SENSOR_TYPE DHT_TYPE_11
-//static const int dInDHT11pin = 14;
-//DHT_nonblocking dht_sensor( dInDHT11pin, DHT_SENSOR_TYPE );
-#define DHT11ambientTempName "ambientTemp"
-#define DHT11ambientHumidityName "ambientHumidity"
-// The light sensors will be used for boiler flame detection.  They have a boolean output
-#define dInLightSensor1pin  14
-#define LightSensor1Name "boiler1Flame" //Active when a flame is seen in the window
-#define dInLightSensor2pin  13
-#define LightSensor2Name "boiler2Flame" //Active when a flame is seen in the window
+//These first six sensors are optocouplers that are sensing the state of 26VAC HVAC calls
+//The optocoupers provide an active low digital signal, connected directly to an I/O pin
+#define dInApin  15
+#define dInAName "zonesDemand"      //Active when ANY of the 9 zones are calling
+#define dInBpin  14
+#define dInBName "boilerDemand"     //Active when the mixer controller says we need heat
+#define dInCpin  13
+#define dInCName "DHWDemand"        //Active when we need to heat water
+#define dInDpin  12
+#define dInDName "snowMeltDemand"   //Active when the front walk needs melting
+#define dInEpin  5
+#define dInEName "boiler1Activate"   //Active when Boiler 1 is asked to fire
+#define dInFpin  4
+#define dInFName "boiler2Activate"   //Active when Boiler 2 is asked to fire
+//Setup the OneWire connection to the thermal probe attached to the boiler loop pipes
 /********************************************************************/
-// Data wire from the two DS18B20's is plugged into pin 2 on the Arduino. 
-#define dallasTempProbeOneWireBus 12
-#define dallasTempProbe0  0
-#define dallasTempProbe1  1
-#define dallasTempProbe0Name "boilerLoop1"
-#define dallasTempProbe1Name "boilerLoop2"
+// Data wire from the DS18B20 is plugged into pin 2 on the Arduino 
+#define dallasTempProbeOneWireBus 2 
 /********************************************************************/
 //Define the microphone pin
 int micSensorPin = A0;    // select the input pin for microphone
@@ -66,13 +57,12 @@ OneWire dallasTempOneWire(dallasTempProbeOneWireBus);
 /********************************************************************/
 // Pass our oneWire reference to Dallas Temperature. 
 DallasTemperature dallasTempSensors(&dallasTempOneWire);
-
 #ifdef DJW
   #define DHTTYPE DHT22   // DHT 21 (AM2301)
   #define DHTPIN D2  // modify to the pin we connected
 
-  const String thingLocation = "MainStreet";
-  const String thingName = "DJW-MAIN-01";
+  const char thingLocation[] =  "mainStreet";
+  const char thingName[] = "DJW-MAIN-01";
   const String certFileName = "/DJW-MAIN-01-certificate.pem.crt";
   const String keyFileName = "/DJW-MAIN-01-private.pem.key";
   
@@ -87,16 +77,15 @@ DallasTemperature dallasTempSensors(&dallasTempOneWire);
   
 #ifdef VIC
   //Name of sensor and location for  logs
-  const char thingLocation[] = "GoldenEagle";
-  const char thingName[] = "VicGE-2";
+  const char thingLocation[] = "GoldenEagel";
+  const char thingName[] = "VicGE-1";
   const String certFileName = "/VicGE-1-certificate.pem.crt";
   const String keyFileName = "/VicGE-1-private.pem.key";
-  #define DHTTYPE DHT11   // Elegoo DHT11
-  #define DHTPIN 2  // The sensor is connected to IO2
-
 #endif
 
+//DHT dht(DHTPIN, DHTTYPE);
 DHTesp dht;
+
 
 //these are for holding the AWS private key and cert, stored in flash
 #define MAX_PEM_SIZE 4096 // max size of PEM certs
@@ -157,8 +146,15 @@ void setup() {
 
   //initialize the I/O pins that we're using.  These all read a boolean value
   pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(dInLightSensor1pin, INPUT);
-  pinMode(dInLightSensor2pin, INPUT);
+  pinMode(dInApin, INPUT);
+  pinMode(dInBpin, INPUT);
+  pinMode(dInCpin, INPUT);
+  pinMode(dInDpin, INPUT);
+  pinMode(dInEpin, INPUT);
+  pinMode(dInFpin, INPUT);
+  //initialize the OneWire pin that we'll use for the temp probe
+  //initialize the Analog input pin that we're using for the microphone
+
 
   //init the CA cert store from flash
   LittleFS.begin();
@@ -226,9 +222,10 @@ void setup() {
 
     ESP.restart();// Can't connect to anything w/o certs!
   }
-  //init DHT sensor
-    Serial.println("Starting DHT Sensor");
-    dht.setup(DHTPIN, DHTesp::DHT11);
+
+  /*****DISABLED - no sensor */
+  //dht.setup(DHTPIN, DHTesp::DHT22);
+    
 }
 
 //global for main loop
@@ -241,10 +238,6 @@ unsigned long epochTime;
  M  
  */
 void loop() {
-//  float DHT11temperature;
-//  float DHT11humidity;
-      //local vars to hold sensor data
-  float ambientT, ambientH;
 
   //Don't block the main loop, but check elapsed time and only run the contense of this block ever 10s
   if (millis() - lastLoopDelay > pollInterval) {
@@ -261,7 +254,7 @@ void loop() {
     //Create the JSON document for holding sensor data
     DynamicJsonDocument jsonDoc(MAX_JSON_DOC_SIZE);
    //jsonObj is a reference for passing around jsonDoc to write sensor data
-    JsonObject jsonObj = jsonDoc.as<JsonObject>(); 
+    //JsonObject jsonObj = jsonDoc.as<JsonObject>(); 
     // Create the header that goes into every MQTT post
     jsonDoc["eventType"] = "scheduledPoll";
     jsonDoc["location"] = thingLocation;
@@ -271,37 +264,25 @@ void loop() {
     jsonDoc["time"] = epochTime;
     jsonDoc["pollInterval"] = pollInterval;
 
-    // Read the DHT11 sensor and add the values to the JSON
-    // DHT Read Ambient Temp and Humidity and add them to the JSON
-    //ambientT = dht.readTemperature() * 9 / 5 + 32; // Convert to Farenheight
-   
-    ambientT = dht.getTemperature() * 9 / 5 + 32; // Convert to Farenheight
-    ambientH = dht.getHumidity();
-Serial.print("DHT Status: "); Serial.println(dht.getStatusString());
-    jsonDoc["temp"] = String(ambientT,1);
-    jsonDoc["humidty"] = String(ambientH,0);
 
-//    readDHT(JsonObject &jsonObj)
-//    dht_sensor.measure( &DHT11temperature, &DHT11humidity );
-//    jsonDoc[DHT11ambientTempName] = String((DHT11temperature*9/5)+32,1);
-//    jsonDoc[DHT11ambientHumidityName] = String(DHT11humidity,0);
-    
+      /****************
+       * 
+       * Add in new sensor readings here
+       */
+      //read a sensor, pass in the jsonObj 
+      //readDHT(jsonDoc); //read a DHT sensor
+
+
     // Read the Dallas temp based probe connected to the circ pipes
     dallasTempSensors.requestTemperatures(); // Send the command to get temperature readings 
-    jsonDoc[dallasTempProbe0Name] = String(dallasTempSensors.getTempFByIndex(dallasTempProbe0));
-    jsonDoc[dallasTempProbe1Name] = String(dallasTempSensors.getTempFByIndex(dallasTempProbe1));  // Why "byIndex"?  
-    // Why "byIndex"?  
+    jsonDoc["dallasTemp"] = String(dallasTempSensors.getTempCByIndex(0));  // Why "byIndex"?  
     // You can have more than one DS18B20 on the same bus.  
     // 0 refers to the first IC on the wire
 
     // Read the microphone value, connected to the Analog Input pin
     jsonDoc[aInName] = analogRead(micSensorPin);
 
-    // Read the light sensors.  The polarity is inverted
-    jsonDoc[LightSensor1Name] = !digitalRead(dInLightSensor1pin);
-    jsonDoc[LightSensor2Name] = !digitalRead(dInLightSensor2pin);
-
-    //Check for errors and publish the sensor data
+       //Check for errors and publish the sensor data
     publishToFeed(jsonDoc);
     
      //update the last publish time
@@ -355,11 +336,12 @@ void publishToFeed(DynamicJsonDocument &jsonDoc){
       //this is the magic to publish to the feed
 
       char feedName[128];
-      sprintf(feedName,"/%s", thingLocation);
-      Serial.print("Feed name: "); Serial.println(feedName); 
-
+      sprintf(feedName,"/%s/%s",thingLocation , thingName );
+      Serial.print("Topic name is:");
+      Serial.println(feedName);
+      
       bool rc  = pubSubClient.publish(feedName , publishData);
-     
+
       //check if publish was successfull or not
       if (rc = true) {
         Serial.print("Published: "); Serial.println(publishData);
@@ -381,7 +363,7 @@ void publishToFeed(DynamicJsonDocument &jsonDoc){
 
 // Subroutine that collects the values of all of the sensors.
 //Pass in the json Object by ref
-void readDHT(JsonObject &jsonObj) {
+void readDHT(DynamicJsonDocument &jsonDoc) {
 
   //local vars to hold sensor data
   float ambientT, ambientH;
@@ -391,10 +373,11 @@ void readDHT(JsonObject &jsonObj) {
    
   ambientT = dht.getTemperature() * 9 / 5 + 32; // Convert to Farenheight
   ambientH = dht.getHumidity();
+
   
 //store data in the json doc in the key = value format below
-      jsonObj["temp"] = ambientT;
-      jsonObj["humidty"] = ambientH;
+      jsonDoc["temp"] = ambientT;
+      jsonDoc["humidty"] = ambientH;
      
   Serial.print("Temp: " );
   Serial.println(ambientT);
