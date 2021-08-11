@@ -405,7 +405,21 @@ void msgReceived(char* topic, byte* payload, unsigned int length) {
   for (int i = 0; i < length; i++) {
     Serial.print((char)payload[i]);
   }
-  Serial.println();
+
+  if (strncmp(topic,"/forceupdate", sizeof(topic))==0){
+     Serial.println();
+    Serial.println("!!!Force update message received!!!");
+   Serial.println();
+   
+     if (ESPOTAGitHub.doUpgrade()) {
+      Serial.println("Upgrade complete."); //This should never be seen as the device should restart on successful upgrade.
+    } else {
+      Serial.print("Unable to upgrade: ");
+      Serial.println(ESPOTAGitHub.getLastError());
+    }
+    
+  }
+  
 }
 
 /* pubSubCheckConnect ***********************
