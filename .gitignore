@@ -38,4 +38,3 @@ src/dv-ota-update-test/secrets.h
 src/dv-furnace-monitor/secrets.h
 src/dv_certstore_test/data/DJWESP8266-2.pem.crt
 *.crt
-src/VicGE-1/secrets.h

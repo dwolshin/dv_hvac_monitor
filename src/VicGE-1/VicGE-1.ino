@@ -28,20 +28,22 @@
 /*************************************************************/
 //Set local user/device config here
 #define pollInterval 10000  //How often to check the sensors, in millseconds
-//These first six sensors are optocouplers that are sensing the state of 26VAC HVAC calls
+//These first five sensors are optocouplers that are sensing the state of 26VAC HVAC calls
 //The optocoupers provide an active low digital signal, connected directly to an I/O pin
-#define dInApin  15
-#define dInAName "zonesDemand"      //Active when ANY of the 9 zones are calling
-#define dInBpin  14
-#define dInBName "boilerDemand"     //Active when the mixer controller says we need heat
-#define dInCpin  13
-#define dInCName "DHWDemand"        //Active when we need to heat water
-#define dInDpin  12
-#define dInDName "snowMeltDemand"   //Active when the front walk needs melting
-#define dInEpin  5
-#define dInEName "boiler1Activate"   //Active when Boiler 1 is asked to fire
-#define dInFpin  4
-#define dInFName "boiler2Activate"   //Active when Boiler 2 is asked to fire
+#define dInApin  14
+#define dInAName "snowMeltDemand"     //Active when the mixer controller says we need heat
+#define dInBpin  13
+#define dInBName "boilerDemand"        //Active when we need to heat water
+#define dInCpin  12
+#define dInCName "DHWDemand"   //Active when the front walk needs melting
+#define dInDpin  5
+#define dInDName "boiler1Activate"   //Active when Boiler 1 is asked to fire
+#define dInEpin  4
+#define dInEName "boiler2Activate"   //Active when Boiler 2 is asked to fire
+// Din 15 is NOT usable!
+//#define dInFpin  15
+//#define dInFName "snowMeltDemand"      //Active when ANY of the 9 zones are calling
+
 //Setup the OneWire connection to the thermal probe attached to the boiler loop pipes
 /********************************************************************/
 // Data wire from the DS18B20 is plugged into pin 2 on the Arduino 
@@ -62,8 +64,8 @@ DallasTemperature dallasTempSensors(&dallasTempOneWire);
   #define DHTTYPE DHT22   // DHT 21 (AM2301)
   #define DHTPIN D2  // modify to the pin we connected
 
- const char thingLocation[] =  "mainStreet";
- const char thingName[] = "DJW-MAIN-01";
+  const String thingLocation = "MainStreet";
+  const String thingName = "DJW-MAIN-01";
   const String certFileName = "/DJW-MAIN-01-certificate.pem.crt";
   const String keyFileName = "/DJW-MAIN-01-private.pem.key";
   
@@ -78,7 +80,7 @@ DallasTemperature dallasTempSensors(&dallasTempOneWire);
   
 #ifdef VIC
   //Name of sensor and location for  logs
-  const char thingLocation[] = "GoldenEagel";
+  const char thingLocation[] = "GoldenEagle";
   const char thingName[] = "VicGE-1";
   const String certFileName = "/VicGE-1-certificate.pem.crt";
   const String keyFileName = "/VicGE-1-private.pem.key";
@@ -125,7 +127,7 @@ PubSubClient pubSubClient(awsEndpoint, 8883, msgReceived, wifiClient);
 /* Set up values for your repository and binary names */
 #define GHOTA_USER "dwolshin"
 #define GHOTA_REPO "dv_hvac_monitor"
-#define GHOTA_CURRENT_TAG "1.0.2"
+#define GHOTA_CURRENT_TAG "1.0.3"
 #define GHOTA_BIN_FILE "djw-ota-update-test.ino.nodemcu.bin"
 #define GHOTA_ACCEPT_PRERELEASE 0
 #include <ESP_OTA_GitHub.h> // ESP_OTA_GitHub at version 0.0.3
@@ -152,10 +154,6 @@ void setup() {
   pinMode(dInCpin, INPUT);
   pinMode(dInDpin, INPUT);
   pinMode(dInEpin, INPUT);
-  pinMode(dInFpin, INPUT);
-  //initialize the OneWire pin that we'll use for the temp probe
-  //initialize the Analog input pin that we're using for the microphone
-
 
   //init the CA cert store from flash
   LittleFS.begin();
@@ -223,9 +221,12 @@ void setup() {
 
     ESP.restart();// Can't connect to anything w/o certs!
   }
+  //init DHT sensor
+  //  Serial.println("Starting DHT Sensor");
+  //dht.begin();
 
   /*****DISABLED - no sensor */
- // dht.setup(DHTPIN, DHTesp::DHT22);
+  //dht.setup(DHTPIN, DHTesp::DHT22);
     
 }
 
@@ -255,23 +256,29 @@ void loop() {
     //Create the JSON document for holding sensor data
     DynamicJsonDocument jsonDoc(MAX_JSON_DOC_SIZE);
    //jsonObj is a reference for passing around jsonDoc to write sensor data
-    //JsonObject jsonObj = jsonDoc.as<JsonObject>(); 
+    JsonObject jsonObj = jsonDoc.as<JsonObject>(); 
     // Create the header that goes into every MQTT post
     jsonDoc["eventType"] = "scheduledPoll";
     jsonDoc["location"] = thingLocation;
     jsonDoc["thingName"] = thingName;
     jsonDoc["severity"] = "info";
     epochTime = getTime();
-    jsonDoc["time"] = epochTime;
+    jsonDoc["thingTime"] = epochTime;
     jsonDoc["pollInterval"] = pollInterval;
 
+    // Read the five boolean digital inputs
+    jsonDoc[dInAName] = !digitalRead(dInApin);
+    jsonDoc[dInBName] = !digitalRead(dInBpin);
+    jsonDoc[dInCName] = !digitalRead(dInCpin);
+    jsonDoc[dInDName] = !digitalRead(dInDpin);
+    jsonDoc[dInEName] = !digitalRead(dInEpin);
 
       /****************
        * 
        * Add in new sensor readings here
        */
       //read a sensor, pass in the jsonObj 
-     // readDHT(jsonDoc); //read a DHT sensor
+      //readDHT(jsonObj); //read a DHT sensor
 
 
     // Read the Dallas temp based probe connected to the circ pipes
@@ -337,12 +344,10 @@ void publishToFeed(DynamicJsonDocument &jsonDoc){
       //this is the magic to publish to the feed
 
       char feedName[128];
-      sprintf(feedName,"/%s/%s",thingLocation , thingName );
-      Serial.print("Topic name is:");
-      Serial.println(feedName);
-      
-      bool rc  = pubSubClient.publish(feedName , publishData);
+      sprintf(feedName,"/%s", thingLocation);
 
+      bool rc  = pubSubClient.publish(feedName , publishData);
+     
       //check if publish was successfull or not
       if (rc = true) {
         Serial.print("Published: "); Serial.println(publishData);
@@ -364,7 +369,7 @@ void publishToFeed(DynamicJsonDocument &jsonDoc){
 
 // Subroutine that collects the values of all of the sensors.
 //Pass in the json Object by ref
-void readDHT(DynamicJsonDocument &jsonDoc) {
+void readDHT(JsonObject &jsonObj) {
 
   //local vars to hold sensor data
   float ambientT, ambientH;
@@ -377,8 +382,8 @@ void readDHT(DynamicJsonDocument &jsonDoc) {
 
   
 //store data in the json doc in the key = value format below
-      jsonDoc["temp"] = ambientT;
-      jsonDoc["humidty"] = ambientH;
+      jsonObj["temp"] = ambientT;
+      jsonObj["humidty"] = ambientH;
      
   Serial.print("Temp: " );
   Serial.println(ambientT);
