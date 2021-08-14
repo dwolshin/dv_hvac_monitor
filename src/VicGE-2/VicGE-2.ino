@@ -53,8 +53,8 @@
 #define dallasTempProbeOneWireBus 12
 #define dallasTempProbe0  0
 #define dallasTempProbe1  1
-#define dallasTempProbe0Name "boilerLoop1"
-#define dallasTempProbe1Name "boilerLoop2"
+#define dallasTempProbe0Name "boilerLoop"
+#define dallasTempProbe1Name "DHWLoop"
 /********************************************************************/
 //Define the microphone pin
 int micSensorPin = A0;    // select the input pin for microphone
@@ -135,8 +135,8 @@ PubSubClient pubSubClient(awsEndpoint, 8883, msgReceived, wifiClient);
 /* Set up values for your repository and binary names */
 #define GHOTA_USER "dwolshin"
 #define GHOTA_REPO "dv_hvac_monitor"
-#define GHOTA_CURRENT_TAG "1.0.3"
-#define GHOTA_BIN_FILE "GE2-ota-update-test.ino.nodemcu.bin"
+#define GHOTA_CURRENT_TAG "1.0.4"
+#define GHOTA_BIN_FILE "VicGE-2.ino.adafruit.bin"
 #define GHOTA_ACCEPT_PRERELEASE 0
 #include <ESP_OTA_GitHub.h> // ESP_OTA_GitHub at version 0.0.3
 
