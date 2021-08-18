@@ -15,8 +15,8 @@
 #include <DallasTemperature.h>  // Library for the OneWire Dallas Semi-based temp probe
 
 //Set only ONE user at a time
-#define DJW
-//#define VIC
+//#define DJW
+#define VIC
 //Include MUST come after user definition - contains secrets for your local setup
 #include "secrets.h" // <- do NOT check in this file!!! 
 
@@ -25,9 +25,83 @@
 //Setting the max JSON DOC size to be the same as the MQTT message size, but they are NOT the same
 #define MAX_JSON_DOC_SIZE 1500
 
+
+/*******************************************************************
+   DJW
+*/
+#ifdef DJW
+
+const char thingLocation[] =  "mainStreet";
+const char thingName[] = "djw-main-03";
+const String certFileName = "/DJW-MAIN-01-certificate.pem.crt";
+const String keyFileName = "/DJW-MAIN-01-private.pem.key";
+
+//#define DHT_ENABLED
+#ifdef DHT_ENABLED
+#define DHTTYPE DHT22   // DHT 21 (AM2301)
+#define DHTPIN D5  // modify to the pin we connected
+#endif //DHT_ENABLED
+
 /*************************************************************/
 //Set local user/device config here
 #define pollInterval 10000  //How often to check the sensors, in millseconds
+
+#define ONEWIRE_ENABLED
+#ifdef ONEWIRE_ENABLED
+//Setup the OneWire connection to the thermal probes
+/********************************************************************/
+// Data wire from the DS18B20 is plugged into pin 2 on the Arduino
+#define dallasTempProbeOneWireBus D2
+/********************************************************************/
+#define TEMPERATURE_PRECISION 9 // Lower resolution
+int numberOfDTDevices = 0;
+#endif //ONEWIRE_ENABLED
+
+//#define MIC_ENABLED
+#ifdef MIC_ENABLED
+//Define the microphone pin
+int micSensorPin = A0;    // select the input pin for microphone
+#define aInName "microphone"
+#endif //MIC_ENABLED
+
+/*
+
+  #define DHTTYPE DHT22   // DHT 21 (AM2301)
+  #define DHTPIN D2  // modify to the pin we connected
+
+  const String thingLocation = "mainStreet";
+  const String thingName = "djwMain01";
+  const String certFileName = "/DJW-MAIN-01-certificate.pem.crt";
+  const String keyFileName = "/DJW-MAIN-01-private.pem.key";
+
+*/
+#endif //DJW
+
+/*******************************************************************
+   VIC
+*/
+
+#ifdef VIC
+//Name of sensor and location for  logs
+const char thingLocation[] = "GoldenEagle";
+const char  thingName[] = "VicGE-1";
+const String certFileName = "/VicGE-1-certificate.pem.crt";
+const String keyFileName = "/VicGE-1-private.pem.key";
+
+
+//#define DHT_ENABLED
+#ifdef DHT_ENABLED
+#define DHTTYPE DHT22   // DHT 21 (AM2301)
+#define DHTPIN D5  // modify to the pin we connected
+#endif //DHT_ENABLED
+
+/*************************************************************/
+//Set local user/device config here
+#define pollInterval 10000  //How often to check the sensors, in millseconds
+
+
+//#define OPTOCOUPLER_ENABLED
+#ifdef OPTOCOUPLER_ENABLED
 //These first six sensors are optocouplers that are sensing the state of 26VAC HVAC calls
 //The optocoupers provide an active low digital signal, connected directly to an I/O pin
 #define dInApin  15
@@ -42,49 +116,38 @@
 #define dInEName "boiler1Activate"   //Active when Boiler 1 is asked to fire
 #define dInFpin  4
 #define dInFName "boiler2Activate"   //Active when Boiler 2 is asked to fire
+//initialize the I/O pins that we're using.  These all read a boolean value
+pinMode(LED_BUILTIN, OUTPUT);
+pinMode(dInApin, INPUT);
+pinMode(dInBpin, INPUT);
+pinMode(dInCpin, INPUT);
+pinMode(dInDpin, INPUT);
+pinMode(dInEpin, INPUT);
+pinMode(dInFpin, INPUT);
+#endif //OPTOCOUPLER_ENABLED
+
+#define ONEWIRE_ENABLED
+#ifdef ONEWIRE_ENABLED
 //Setup the OneWire connection to the thermal probe attached to the boiler loop pipes
 /********************************************************************/
-// Data wire from the DS18B20 is plugged into pin 2 on the Arduino 
-#define dallasTempProbeOneWireBus 2 
+// Data wire from the DS18B20 is plugged into pin 2 on the Arduino
+#define dallasTempProbeOneWireBus D2
 /********************************************************************/
+#define TEMPERATURE_PRECISION 9 // Lower resolution
+int numberOfDTDevices = 0;
+
+#endif //ONEWIRE_ENABLED
+
 //Define the microphone pin
 int micSensorPin = A0;    // select the input pin for microphone
 #define aInName "microphone"
 
-// Setup a oneWire instance to communicate with any OneWire devices
-// (not just Maxim/Dallas temperature ICs)
-OneWire dallasTempOneWire(dallasTempProbeOneWireBus);
-/********************************************************************/
-// Pass our oneWire reference to Dallas Temperature.
-DallasTemperature dallasTempSensors(&dallasTempOneWire);
 
-#ifdef DJW
-#define DHTTYPE DHT22   // DHT 21 (AM2301)
-#define DHTPIN D5  // modify to the pin we connected
+//initialize the OneWire pin that we'll use for the temp probe
+//initialize the Analog input pin that we're using for the microphone
 
-const char thingLocation[] =  "mainStreet";
-const char thingName[] = "djw-main-01";
-const String certFileName = "/DJW-MAIN-01-certificate.pem.crt";
-const String keyFileName = "/DJW-MAIN-01-private.pem.key";
+#endif //VIC
 
-
-/*
-  const String deviceName = "DJWESP8266-2";
-  const String sensorName = "DHT22-2";
-  String certFileName = "/DJWESP8266-2.cert.pem";
-  const String keyFileName = "/DJWESP8266-2.private.key";
-*/
-#endif
-
-#ifdef VIC
-//Name of sensor and location for  logs
-const char thingLocation[] = "GoldenEagel";
-const char thingName[] = "VicGE-1";
-const String certFileName = "/VicGE-1-certificate.pem.crt";
-const String keyFileName = "/VicGE-1-private.pem.key";
-#endif
-
-//DHT dht(DHTPIN, DHTTYPE);
 DHTesp dht;
 
 
@@ -121,11 +184,20 @@ void msgReceived(char* topic, byte* payload, unsigned int len);
 //MQTT pubsub client
 PubSubClient pubSubClient(awsEndpoint, 8883, msgReceived, wifiClient);
 
+#ifdef ONEWIRE_ENABLED
+// Setup a oneWire instance to communicate with any OneWire devices
+// (not just Maxim/Dallas temperature ICs)
+OneWire dallasTempOneWire(dallasTempProbeOneWireBus);
+/********************************************************************/
+// Pass our oneWire reference to Dallas Temperature.
+DallasTemperature dallasTempSensors(&dallasTempOneWire);
+
+#endif // ONEWIRE_ENABLED
 
 /* Set up values for your repository and binary names */
 #define GHOTA_USER "dwolshin"
 #define GHOTA_REPO "dv_hvac_monitor"
-#define GHOTA_CURRENT_TAG "1.0.2"
+#define GHOTA_CURRENT_TAG "1.0.4"
 #define GHOTA_BIN_FILE "djw-ota-update-test.ino.nodemcu.bin"
 #define GHOTA_ACCEPT_PRERELEASE 0
 #include <ESP_OTA_GitHub.h> // ESP_OTA_GitHub at version 0.0.3
@@ -142,18 +214,6 @@ void setup() {
   delay(1000);
   Serial.println();
   Serial.println();
-
-  //initialize the I/O pins that we're using.  These all read a boolean value
-  pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(dInApin, INPUT);
-  pinMode(dInBpin, INPUT);
-  pinMode(dInCpin, INPUT);
-  pinMode(dInDpin, INPUT);
-  pinMode(dInEpin, INPUT);
-  pinMode(dInFpin, INPUT);
-  //initialize the OneWire pin that we'll use for the temp probe
-  //initialize the Analog input pin that we're using for the microphone
-
 
   //init the CA cert store from flash
   LittleFS.begin();
@@ -181,8 +241,7 @@ void setup() {
   Serial.println("IP address: "); Serial.println(WiFi.localIP());
 
   setClock(); // Required for X.509 validation
-
-
+  
   // Initialise Update Code
   //We do this locally so that the memory used is freed when the function exists.
   ESPOTAGitHub ESPOTAGitHub(&certStore, GHOTA_USER, GHOTA_REPO, GHOTA_CURRENT_TAG, GHOTA_BIN_FILE, GHOTA_ACCEPT_PRERELEASE);
@@ -204,31 +263,82 @@ void setup() {
   }
   /* End of check and upgrade code */
 
-  //load the certificates and private key for talking to AWS
-  File cert = LittleFS.open( certFileName, "r");
-  int certSize = cert.size();
-  clientCert = new X509List(cert, certSize);
-  Serial.print("Cert size is:");
-  Serial.println(certSize);
-  cert.close();
+    //load the certificates and private key for talking to AWS
+    File cert = LittleFS.open( certFileName, "r");
+    int certSize = cert.size();
+    clientCert = new X509List(cert, certSize);
+    Serial.print("Cert size is:");
+    Serial.println(certSize);
+    cert.close();
+  
+    File key = LittleFS.open(keyFileName, "r");
+    int keySize = key.size();
+    clientKey = new BearSSL::PrivateKey(key, keySize);
+    Serial.print("Client Key size is:");
+    Serial.println(keySize);
+    key.close();
+  
+    if (keySize == 0 || certSize == 0 ) {
+      Serial.printf("ERROR: Cert or Key size is zero - did you upload the right keys/certs to LittleFS directory before running?\n");
+      delay(50000);
+  
+      ESP.restart();// Can't connect to anything w/o certs!
+    }
 
-  File key = LittleFS.open(keyFileName, "r");
-  int keySize = key.size();
-  clientKey = new BearSSL::PrivateKey(key, keySize);
-  Serial.print("Client Key size is:");
-  Serial.println(keySize);
-  key.close();
+  #ifdef DHT_ENABLED
+      /*****DISABLED - no sensor */
+      dht.setup(DHTPIN, DHTesp::DHT22);
+  #endif //DHT_ENABLED
 
-  if (keySize == 0 || certSize == 0 ) {
-    Serial.printf("ERROR: Cert or Key size is zero - did you upload the right keys/certs to LittleFS directory before running?\n");
-    delay(50000);
+  #ifdef ONEWIRE_ENABLED
+      // Start up the library
+      dallasTempSensors.begin();
+    
+      // Grab a count of devices on the wire
+     numberOfDTDevices = dallasTempSensors.getDeviceCount();
+      DeviceAddress tempDeviceAddress; // We'll use this variable to store a found device address
+    
+      // locate devices on the bus
+      Serial.print("Locating devices...");
+      Serial.print("Found ");
+      Serial.print(dallasTempSensors.getDeviceCount(), DEC);
+      Serial.println(" devices.");
+    
+      // report parasite power requirements
+      Serial.print("Parasite power is: ");
+      if (dallasTempSensors.isParasitePowerMode()) Serial.println("ON");
+      else Serial.println("OFF");
+    
 
-    ESP.restart();// Can't connect to anything w/o certs!
-  }
 
-  /*****DISABLED - no sensor */
-  dht.setup(DHTPIN, DHTesp::DHT22);
-
+    // Loop through each device, print out address
+    for (int i = 0; i < numberOfDTDevices; i++)
+    {
+      // Search the wire for address
+      if (dallasTempSensors.getAddress(tempDeviceAddress, i))
+      {
+        Serial.print("Found device ");
+        Serial.print(i, DEC);
+        Serial.print(" with address: ");
+        printAddress(tempDeviceAddress);
+        Serial.println();
+    
+        Serial.print("Setting resolution to ");
+        Serial.println(TEMPERATURE_PRECISION, DEC);
+    
+        // set the resolution to TEMPERATURE_PRECISION bit (Each Dallas/Maxim device is capable of several different resolutions)
+        dallasTempSensors.setResolution(tempDeviceAddress, TEMPERATURE_PRECISION);
+    
+        Serial.print("Resolution actually set to: ");
+        Serial.print(dallasTempSensors.getResolution(tempDeviceAddress), DEC);
+        Serial.println();
+      } else {
+        Serial.print("Found ghost device at ");
+        Serial.print(i, DEC);
+        Serial.print(" but could not detect address. Check power and cabling");
+      }
+    }
+  #endif //ONEWIRE_ENABLED
 }
 
 //global for main loop
@@ -270,6 +380,7 @@ void loop() {
     epochTime = getTime();
     jsonDoc["time"] = epochTime;
     jsonDoc["pollInterval"] = pollInterval;
+    jsonDoc["version"] = GHOTA_CURRENT_TAG;
 
     Serial.print("--->Free Memeory after JSON Doc: "); Serial.println(ESP.getFreeHeap(), DEC);
 
@@ -278,18 +389,53 @@ void loop() {
        Add in new sensor readings here
     */
     //read a sensor, pass in the jsonObj
+#ifdef DHT_ENABLED
     readDHT(jsonDoc); //read a DHT sensor
+#endif //DHT_ENABLED
 
-
+#ifdef ONEWIRE_ENABLED
     // Read the Dallas temp based probe connected to the circ pipes
-    dallasTempSensors.requestTemperatures(); // Send the command to get temperature readings
-    jsonDoc["dallasTemp"] = String(dallasTempSensors.getTempCByIndex(0));  // Why "byIndex"?
+    DeviceAddress tempDeviceAddress; // We'll use this variable to store a found device address
+
+    dallasTempSensors.requestTemperatures(); 
+
+     // Loop through each device, print out address
+    for (int i = 0; i < numberOfDTDevices; i++)
+    {
+      // Search the wire for address
+      if (dallasTempSensors.getAddress(tempDeviceAddress, i))
+      {
+        Serial.print("Found device ");
+        Serial.print(i, DEC);
+        Serial.print(" with address: ");
+        printAddress(tempDeviceAddress);
+        Serial.println();
+    
+    // Send the command to get temperature readings
     // You can have more than one DS18B20 on the same bus.
     // 0 refers to the first IC on the wire
+    
+   // float dtempf = DallasTemperature::toFahrenheit(dallasTempSensors.getTempCByIndex(0));
 
+    float dtempF = dallasTempSensors.getTempF(tempDeviceAddress);
+    Serial.print("Temp in F: ");
+    Serial.println(dtempF);
+    
+     char ftempName[128];
+    sprintf(ftempName,"dallasTempSensor%d", i );
+   Serial.print("Sensor Name is: ");
+    Serial.println(ftempName);
+
+    jsonDoc[ftempName] = dtempF;
+      }
+    }
+    
+#endif // ONEWIRE_ENABLED
+
+#ifdef MIC_ENABLED
     // Read the microphone value, connected to the Analog Input pin
     jsonDoc[aInName] = analogRead(micSensorPin);
-
+#endif //MIC_ENABLED
     //Check for errors and publish the sensor data
     publishToFeed(jsonDoc);
 
@@ -426,19 +572,7 @@ void msgReceived(char* topic, byte* payload, unsigned int length) {
     ESP.restart();// Force update check
 
   }
-  String rebootTopic =  "/remotereboot/" + thingName
-   if (strncmp(topic, "/remotereboot/" + thingName , sizeof(topic)) == 0) {
 
-    Serial.println();
-    Serial.println("!!!Force update message received!!!");
-    Serial.println();
-    Serial.print("--->Free Memeory During Force Update: "); Serial.println(ESP.getFreeHeap(), DEC);
-
-    pubSubClient.disconnect();
-
-    ESP.restart();// Force update check
-
-  }
 }
 
 /* pubSubCheckConnect ***********************
@@ -481,6 +615,15 @@ void setClock() {
   Serial.print(asctime(&timeinfo));
 }
 
+// function to print a device address
+void printAddress(DeviceAddress deviceAddress)
+{
+  for (uint8_t i = 0; i < 8; i++)
+  {
+    if (deviceAddress[i] < 16) Serial.print("0");
+    Serial.print(deviceAddress[i], HEX);
+  }
+}
 
 /****
   Includes code from example:
