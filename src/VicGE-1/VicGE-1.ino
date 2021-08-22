@@ -31,15 +31,15 @@
 //These first five sensors are optocouplers that are sensing the state of 26VAC HVAC calls
 //The optocoupers provide an active low digital signal, connected directly to an I/O pin
 #define dInApin  14
-#define dInAName "snowMeltDemand"     //Active when the mixer controller says we need heat
+#define dInAName "snowMeltDemand"     //front walk needs melting
 #define dInBpin  13
-#define dInBName "boilerDemand"        //Active when we need to heat water
+#define dInBName "boilerDemand"       //Active when we need to heat the boiler loop
 #define dInCpin  12
-#define dInCName "DHWDemand"   //Active when the front walk needs melting
+#define dInCName "DHWDemand"          //Active when we need to heat domestic hot water 
 #define dInDpin  5
-#define dInDName "boiler1Activate"   //Active when Boiler 1 is asked to fire
+#define dInDName "boiler1Activate"    //Active when Boiler 1 is asked to fire
 #define dInEpin  4
-#define dInEName "boiler2Activate"   //Active when Boiler 2 is asked to fire
+#define dInEName "boiler2Activate"    //Active when Boiler 2 is asked to fire
 // Din 15 is NOT usable!
 //#define dInFpin  15
 //#define dInFName "snowMeltDemand"      //Active when ANY of the 9 zones are calling
@@ -64,29 +64,20 @@ DallasTemperature dallasTempSensors(&dallasTempOneWire);
   #define DHTTYPE DHT22   // DHT 21 (AM2301)
   #define DHTPIN D2  // modify to the pin we connected
 
-  const String thingLocation = "MainStreet";
-  const String thingName = "DJW-MAIN-01";
+  const char thingLocation[] = "MainStreet";
+  const char thingName[] = "DJW-MAIN-01";
   const String certFileName = "/DJW-MAIN-01-certificate.pem.crt";
   const String keyFileName = "/DJW-MAIN-01-private.pem.key";
-  
-  
-  /*
-  const String deviceName = "DJWESP8266-2";
-  const String sensorName = "DHT22-2";
-  String certFileName = "/DJWESP8266-2.cert.pem";
-  const String keyFileName = "/DJWESP8266-2.private.key";
-*/
 #endif
   
 #ifdef VIC
   //Name of sensor and location for  logs
-  const char thingLocation[] = "GoldenEagle";
+  const char thingLocation[] = "goldenEagle";
   const char thingName[] = "VicGE-1";
   const String certFileName = "/VicGE-1-certificate.pem.crt";
   const String keyFileName = "/VicGE-1-private.pem.key";
 #endif
 
-//DHT dht(DHTPIN, DHTTYPE);
 DHTesp dht;
 
 
@@ -128,14 +119,12 @@ PubSubClient pubSubClient(awsEndpoint, 8883, msgReceived, wifiClient);
 #define GHOTA_USER "dwolshin"
 #define GHOTA_REPO "dv_hvac_monitor"
 #define GHOTA_CURRENT_TAG "1.0.3"
-#define GHOTA_BIN_FILE "djw-ota-update-test.ino.nodemcu.bin"
+#define GHOTA_BIN_FILE "VicGE-1.ino.huzzah.bin"
 #define GHOTA_ACCEPT_PRERELEASE 0
 #include <ESP_OTA_GitHub.h> // ESP_OTA_GitHub at version 0.0.3
 
 // Initialise OTA Update Code
 ESPOTAGitHub ESPOTAGitHub(&certStore, GHOTA_USER, GHOTA_REPO, GHOTA_CURRENT_TAG, GHOTA_BIN_FILE, GHOTA_ACCEPT_PRERELEASE);
-
-
 
 /* SKETCH SETUP SSSSSSSSSSSSSSSSSS
  S  
@@ -172,6 +161,8 @@ void setup() {
 
   WiFi.begin(WLAN_SSID, WLAN_PASS);
   while (WiFi.status() != WL_CONNECTED) {
+    Serial.println(WiFi.status());
+    
     delay(500);
     Serial.print(".");
   }
@@ -221,13 +212,6 @@ void setup() {
 
     ESP.restart();// Can't connect to anything w/o certs!
   }
-  //init DHT sensor
-  //  Serial.println("Starting DHT Sensor");
-  //dht.begin();
-
-  /*****DISABLED - no sensor */
-  //dht.setup(DHTPIN, DHTesp::DHT22);
-    
 }
 
 //global for main loop
@@ -239,9 +223,13 @@ unsigned long epochTime;
  M  
  M  
  */
+float totalMicAnalogVal; // Add together all of the analog input microphone samples
+int totalMicAnalogReads; // Used to compute the average
+float micAnalogVal;   // Latest sample
+
 void loop() {
 
-  //Don't block the main loop, but check elapsed time and only run the contense of this block ever 10s
+  //Don't block the main loop, but check elapsed time and only run the contents of this block every pollInterval
   if (millis() - lastLoopDelay > pollInterval) {
             
     // set the cert store and keys for this connection  
@@ -255,7 +243,7 @@ void loop() {
     
     //Create the JSON document for holding sensor data
     DynamicJsonDocument jsonDoc(MAX_JSON_DOC_SIZE);
-   //jsonObj is a reference for passing around jsonDoc to write sensor data
+    //jsonObj is a reference for passing around jsonDoc to write sensor data
     JsonObject jsonObj = jsonDoc.as<JsonObject>(); 
     // Create the header that goes into every MQTT post
     jsonDoc["eventType"] = "scheduledPoll";
@@ -273,14 +261,6 @@ void loop() {
     jsonDoc[dInDName] = !digitalRead(dInDpin);
     jsonDoc[dInEName] = !digitalRead(dInEpin);
 
-      /****************
-       * 
-       * Add in new sensor readings here
-       */
-      //read a sensor, pass in the jsonObj 
-      //readDHT(jsonObj); //read a DHT sensor
-
-
     // Read the Dallas temp based probe connected to the circ pipes
     dallasTempSensors.requestTemperatures(); // Send the command to get temperature readings 
     jsonDoc["dallasTemp"] = String(dallasTempSensors.getTempCByIndex(0));  // Why "byIndex"?  
@@ -288,13 +268,29 @@ void loop() {
     // 0 refers to the first IC on the wire
 
     // Read the microphone value, connected to the Analog Input pin
-    jsonDoc[aInName] = analogRead(micSensorPin);
+Serial.print("Reads: "); Serial.println(totalMicAnalogReads);
+Serial.print("Total Val: "); Serial.println(totalMicAnalogVal);
+  
 
-       //Check for errors and publish the sensor data
+    micAnalogVal = analogRead(micSensorPin);
+    jsonDoc["micInstantVal"] = micAnalogVal;
+    totalMicAnalogVal += micAnalogVal; // Add together all of the analog input microphone samples
+    totalMicAnalogReads += 1; // Used to compute the average
+    jsonDoc["micReads"] = totalMicAnalogReads;
+    jsonDoc["micAverage"] = totalMicAnalogVal / totalMicAnalogReads;
+    totalMicAnalogReads = 0;
+    totalMicAnalogVal = 0;
+
+    //Check for errors and publish the sensor data
     publishToFeed(jsonDoc);
     
-     //update the last publish time
-     lastLoopDelay = millis();
+    //update the last publish time
+    lastLoopDelay = millis();
+  } else {
+    // Read the analog input pin, and add it to our running total
+    totalMicAnalogVal += analogRead(micSensorPin);
+    totalMicAnalogReads += 1;
+  
   }
   
 
@@ -306,17 +302,8 @@ void loop() {
  */
 
 void publishToFeed(DynamicJsonDocument &jsonDoc){ 
-
-  /* DEBUG*****************************
-   // Fill up the doc with some test data
-   for (int i = 0; i < 40; i++) {
-      String s = "Value" + String(i);
-      //jsonDoc[s] = "short value";
-       jsonDoc[s] = epochTime;   
-    }
- */
  
-  //holds the size of the Serialized JSON doc in bytes
+    //holds the size of the Serialized JSON doc in bytes
     int jdocSize = measureJson(jsonDoc);
 
     /*DEBUG*****************************
@@ -324,7 +311,7 @@ void publishToFeed(DynamicJsonDocument &jsonDoc){
     serializeJson(jsonDoc, Serial);
     */
 
-    Serial.print("JSON buffer size:");
+    Serial.print("JSON raw payload size:");
     Serial.println(jsonDoc.memoryUsage());
     Serial.print("Size of Serialized JSON data: ");
     Serial.println(jdocSize);
@@ -342,9 +329,9 @@ void publishToFeed(DynamicJsonDocument &jsonDoc){
       Serial.println(b, DEC);
 
       //this is the magic to publish to the feed
-
       char feedName[128];
-      sprintf(feedName,"/%s", thingLocation);
+      sprintf(feedName, "/%s/%s", thingLocation , thingName );
+      Serial.print("Topic name is:"); Serial.println(feedName);
 
       bool rc  = pubSubClient.publish(feedName , publishData);
      
@@ -362,12 +349,7 @@ void publishToFeed(DynamicJsonDocument &jsonDoc){
     }
 }
 
-/* readSensors ************************
- * THIS IS COMMENTED OUT ALTOGETHER. IT SEEMED CLEANER (in my case) TO SIMPLY DO IT IN MAIN 
- *  
- */
-
-// Subroutine that collects the values of all of the sensors.
+// Subroutine that collects the values of the DHT sensor.
 //Pass in the json Object by ref
 void readDHT(JsonObject &jsonObj) {
 
@@ -394,7 +376,7 @@ void readDHT(JsonObject &jsonObj) {
 }
 
 
-// Function that gets current epoch time
+// Function that gets current epoch time, and also updates our System Time on a regular basis
 unsigned long getTime() {
   timeClient.update();
   unsigned long now = timeClient.getEpochTime();
@@ -436,6 +418,7 @@ void pubSubCheckConnect() {
     Serial.print("PubSubClient connecting to: "); Serial.print(awsEndpoint);
     while ( ! pubSubClient.connected()) {
       Serial.print(".");
+      delay(500); 
       pubSubClient.connect(thingName);
     }
     Serial.println(" connected");
